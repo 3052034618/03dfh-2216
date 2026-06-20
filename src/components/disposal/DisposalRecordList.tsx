@@ -15,17 +15,23 @@ import {
   Activity
 } from 'lucide-react';
 import type { DisposalRecord, DisposalType } from '@/types';
-import { 
-  getDisposalTypeLabel, 
-  formatFullDateTime, 
-  getRelativeTime,
+import {
+  getDisposalTypeLabel,
+  formatFullDateTime,
+  formatTime,
   formatTemperature,
   getRiskReasonLabel,
   getRiskReasonColor,
   getFollowUpStatusLabel,
   getFollowUpStatusColor,
+  getRelativeTime,
 } from '@/utils/format';
-import { DISPOSAL_TYPE_LABELS } from '@/types';
+import {
+  DISPOSAL_TYPE_LABELS,
+  DRIVER_CONFIRM_STATUS_LABELS,
+  DETOUR_EXECUTION_STATUS_LABELS,
+  EXECUTION_FOLLOW_UP_LABELS,
+} from '@/types';
 
 interface DisposalRecordListProps {
   records: DisposalRecord[];
@@ -264,6 +270,130 @@ export const DisposalRecordList = ({ records, showFilters = true }: DisposalReco
                               <span className="text-xs text-success font-medium">处置方式</span>
                               <span className="text-sm text-white">{record.selectedAction}</span>
                             </div>
+                          </div>
+                        )}
+
+                        {record.riskLevelAtEvent && (
+                          <div className="mt-3 p-3 bg-deep-blue-800/50 border border-deep-blue-700 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <AlertTriangle className="w-4 h-4 text-warning" />
+                              <span className="text-xs text-deep-blue-600">事件时风险等级</span>
+                              <span
+                                className={`text-sm font-medium ${
+                                  record.riskLevelAtEvent === 'alert'
+                                    ? 'text-danger'
+                                    : record.riskLevelAtEvent === 'warning'
+                                    ? 'text-warning'
+                                    : 'text-success'
+                                }`}
+                              >
+                                {record.riskLevelAtEvent === 'alert'
+                                  ? '告警'
+                                  : record.riskLevelAtEvent === 'warning'
+                                  ? '预警'
+                                  : '正常'}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {record.driverConfirmStatus && (
+                          <div className="mt-3 p-3 bg-info/10 border border-info/30 rounded-lg">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <User className="w-4 h-4 text-info" />
+                                <span className="text-xs text-info font-medium">司机确认状态</span>
+                              </div>
+                              <span
+                                className={`text-sm font-medium ${
+                                  record.driverConfirmStatus === 'confirmed'
+                                    ? 'text-success'
+                                    : record.driverConfirmStatus === 'rejected'
+                                    ? 'text-danger'
+                                    : 'text-warning'
+                                }`}
+                              >
+                                {DRIVER_CONFIRM_STATUS_LABELS[record.driverConfirmStatus]}
+                              </span>
+                            </div>
+                            {record.driverConfirmTime && (
+                              <div className="text-xs text-deep-blue-600 mt-1 ml-6">
+                                {formatFullDateTime(record.driverConfirmTime)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {record.detourExecutionStatus && (
+                          <div className="mt-3 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Route className="w-4 h-4 text-purple-400" />
+                                <span className="text-xs text-purple-400 font-medium">改线执行状态</span>
+                              </div>
+                              <span className="text-sm font-medium text-purple-400">
+                                {DETOUR_EXECUTION_STATUS_LABELS[record.detourExecutionStatus]}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {record.executionFollowUpStatus && (
+                          <div className="mt-3 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Activity className="w-4 h-4 text-cyan-400" />
+                                <span className="text-xs text-cyan-400 font-medium">执行跟踪</span>
+                              </div>
+                              <span className="text-sm font-medium text-cyan-400">
+                                {EXECUTION_FOLLOW_UP_LABELS[record.executionFollowUpStatus]}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {record.temperatureAfter !== undefined && (
+                          <div className="mt-3 p-3 bg-deep-blue-800/50 border border-deep-blue-700 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <Thermometer className="w-4 h-4 text-info" />
+                              <span className="text-xs text-deep-blue-600">处置后温度</span>
+                              <span className="text-sm text-white font-mono">
+                                {formatTemperature(record.temperatureAfter)}
+                              </span>
+                              {record.temperatureTrend !== undefined && (
+                                <span
+                                  className={`text-xs font-medium ${
+                                    record.temperatureTrend < -0.2
+                                      ? 'text-success'
+                                      : record.temperatureTrend > 0.2
+                                      ? 'text-danger'
+                                      : 'text-warning'
+                                  }`}
+                                >
+                                  {record.temperatureTrend > 0 ? '+' : ''}
+                                  {record.temperatureTrend.toFixed(1)}℃
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {record.alternativeRouteName && (
+                          <div className="mt-3 p-3 bg-deep-blue-800/50 border border-deep-blue-700 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <Route className="w-4 h-4 text-info" />
+                              <span className="text-xs text-deep-blue-600">选择的路线</span>
+                              <span className="text-sm text-white font-medium">
+                                {record.alternativeRouteName}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {record.executionNotes && (
+                          <div className="mt-3 p-3 bg-deep-blue-800/50 border border-deep-blue-700 rounded-lg">
+                            <p className="text-xs text-deep-blue-600 mb-1">执行备注</p>
+                            <p className="text-sm text-white">{record.executionNotes}</p>
                           </div>
                         )}
 

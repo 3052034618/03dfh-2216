@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -24,7 +24,9 @@ import { ServiceAreaList } from '@/components/vehicle/ServiceAreaList';
 import { RiskSegmentList } from '@/components/vehicle/RiskSegmentList';
 import { DetourDecisionPanel } from '@/components/vehicle/DetourDecisionPanel';
 import { PostTripReview } from '@/components/vehicle/PostTripReview';
+import { PlaybackTimeline, PlaybackSnapshot } from '@/components/vehicle/PlaybackTimeline';
 import { DisposalButtons } from '@/components/disposal/DisposalButtons';
+import { MapView } from '@/components/map/MapView';
 import {
   formatTemperature,
   getStatusColor,
@@ -35,12 +37,15 @@ import {
   formatTime,
   formatDateTime,
 } from '@/utils/format';
-import type { Vehicle } from '@/types';
+import type { Vehicle, Position } from '@/types';
 
 export default function Detail() {
   const { vehicleId } = useParams<{ vehicleId: string }>();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'temperature' | 'risks' | 'detour' | 'doors' | 'services' | 'review'>('temperature');
+  const [selectedAlternativeRouteId, setSelectedAlternativeRouteId] = useState<string | null>(null);
+  const [playbackSnapshot, setPlaybackSnapshot] = useState<PlaybackSnapshot | null>(null);
+  const [isPlaybackActive, setIsPlaybackActive] = useState(false);
 
   const vehicles = useAppStore((state) => state.vehicles);
   const vehicle = useMemo(() => vehicles.find((v) => v.id === vehicleId), [vehicles, vehicleId]);
@@ -51,6 +56,18 @@ export default function Detail() {
   const alternativeRoutes = useAppStore((state) => state.getAlternativeRoutes(vehicleId || ''));
   const disposalRecords = useAppStore((state) => state.disposalRecords);
   const updateTemperatures = useAppStore((state) => state.updateTemperatures);
+
+  const handleTimeChange = useCallback((time: Date, snapshot: PlaybackSnapshot) => {
+    setPlaybackSnapshot(snapshot);
+  }, []);
+
+  const handlePlaybackStateChange = useCallback((playing: boolean) => {
+    setIsPlaybackActive(playing);
+  }, []);
+
+  const displayPosition: Position | null = playbackSnapshot?.position || vehicle?.currentPosition || null;
+  const displayTemperature = playbackSnapshot?.temperature ?? vehicle?.currentTemp ?? 0;
+  const displayStatus = playbackSnapshot?.riskLevel || vehicle?.riskLevel || vehicle?.currentStatus || 'normal';
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -87,7 +104,6 @@ export default function Detail() {
     { id: 'services', label: '前方服务区', icon: Coffee },
   ] as const;
 
-  const displayStatus = vehicle.riskLevel || vehicle.currentStatus;
   const isWarning = displayStatus === 'warning';
   const isAlert = displayStatus === 'alert';
 
@@ -189,7 +205,56 @@ export default function Detail() {
 
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex border-b border-deep-blue-700 bg-deep-blue-800/50">
+          <div className="h-72 border-b border-deep-blue-700 relative">
+            {displayPosition && (
+              <MapView
+                vehicles={[vehicle]}
+                routeSegments={{ [vehicle.id]: playbackSnapshot?.activeRiskSegments?.length ? playbackSnapshot.activeRiskSegments : routeSegments }}
+                center={[displayPosition.lat, displayPosition.lng]}
+                zoom={9}
+                selectedVehicleId={vehicle.id}
+                alternativeRoutes={alternativeRoutes}
+                selectedAlternativeRouteId={selectedAlternativeRouteId}
+                showAlternativeRoutes={activeTab === 'detour'}
+                playbackPosition={isPlaybackActive || playbackSnapshot ? displayPosition : null}
+                playbackSegments={playbackSnapshot?.activeRiskSegments || []}
+              />
+            )}
+
+            {activeTab === 'detour' && alternativeRoutes.length > 0 && (
+              <div className="absolute top-4 left-4 z-[1000] bg-deep-blue-800/90 backdrop-blur border border-deep-blue-700 rounded-lg p-3">
+                <p className="text-xs text-deep-blue-600 mb-2">路线图例</p>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-0.5 bg-info" />
+                    <span className="text-xs text-white">当前路线</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-0.5 bg-indigo-500" />
+                    <span className="text-xs text-white">备选路线</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-0.5 bg-purple-500" />
+                    <span className="text-xs text-white">已选中</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="px-4 pt-3 border-b border-deep-blue-700 bg-deep-blue-800/30">
+            <PlaybackTimeline
+              vehicle={vehicle}
+              temperatureData={temperatureData}
+              routeSegments={routeSegments}
+              disposalRecords={disposalRecords}
+              doorEvents={doorEvents}
+              onTimeChange={handleTimeChange}
+              onPlaybackStateChange={handlePlaybackStateChange}
+            />
+          </div>
+
+          <div className="flex border-b border-deep-blue-700 bg-deep-blue-800/50 mt-0">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -287,7 +352,11 @@ export default function Detail() {
                       对比后选择最优路线
                     </span>
                   </div>
-                  <DetourDecisionPanel vehicle={vehicle} alternativeRoutes={alternativeRoutes} />
+                  <DetourDecisionPanel
+                    vehicle={vehicle}
+                    alternativeRoutes={alternativeRoutes}
+                    onRouteSelect={setSelectedAlternativeRouteId}
+                  />
                 </div>
               )}
 

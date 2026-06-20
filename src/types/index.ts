@@ -4,6 +4,9 @@ export type DisposalType = 'notify_driver' | 'suggest_detour' | 'delay_receipt' 
 export type DoorEventType = 'open' | 'close';
 export type RouteSegmentType = 'normal' | 'congestion' | 'hotspot' | 'long_stop';
 export type RiskReason = 'congestion' | 'hotspot' | 'long_stop' | 'temperature' | 'door_open';
+export type DriverConfirmStatus = 'pending' | 'confirmed' | 'rejected';
+export type DetourExecutionStatus = 'not_started' | 'in_progress' | 'completed' | 'cancelled';
+export type ExecutionFollowUpStatus = 'waiting' | 'in_progress' | 'completed' | 'failed';
 
 export interface Position {
   lat: number;
@@ -36,6 +39,8 @@ export interface Vehicle {
     estimatedOverheatMinutes?: number;
     estimatedTempRise: number;
   };
+  activeAlternativeRouteId?: string;
+  detourExecutionStatus?: DetourExecutionStatus;
 }
 
 export interface TemperatureReading {
@@ -111,6 +116,15 @@ export interface DisposalRecord {
   followUpStatus?: 'improving' | 'stable' | 'worsening' | 'resolved';
   routeChange?: boolean;
   alternativeRouteId?: string;
+  driverConfirmStatus?: DriverConfirmStatus;
+  driverConfirmTime?: Date;
+  detourExecutionStatus?: DetourExecutionStatus;
+  executionFollowUpStatus?: ExecutionFollowUpStatus;
+  temperatureAfter?: number;
+  temperatureTrend?: number;
+  executionNotes?: string;
+  riskLevelAtEvent?: VehicleStatus;
+  alternativeRouteName?: string;
 }
 
 export interface FilterState {
@@ -162,4 +176,24 @@ export const FOLLOW_UP_STATUS_LABELS: Record<string, string> = {
   stable: '温度稳定',
   worsening: '温度持续上升',
   resolved: '已恢复正常',
+};
+
+export const DRIVER_CONFIRM_STATUS_LABELS: Record<string, string> = {
+  pending: '待司机确认',
+  confirmed: '司机已确认',
+  rejected: '司机已拒绝',
+};
+
+export const DETOUR_EXECUTION_STATUS_LABELS: Record<string, string> = {
+  not_started: '未开始执行',
+  in_progress: '改线执行中',
+  completed: '改线已完成',
+  cancelled: '改线已取消',
+};
+
+export const EXECUTION_FOLLOW_UP_LABELS: Record<string, string> = {
+  waiting: '等待执行',
+  in_progress: '跟踪中',
+  completed: '执行完成',
+  failed: '执行失败',
 };

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Thermometer, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/store';
@@ -9,15 +9,53 @@ import { MapView } from '@/components/map/MapView';
 
 export default function Overview() {
   const {
-    getFilteredVehicles,
+    vehicles: allVehicles,
+    filters,
     getVehicleStatusCounts,
     updateTemperatures,
     temperatureData,
     routeSegments,
+    initializeRiskLevels,
   } = useAppStore();
 
-  const vehicles = getFilteredVehicles();
-  const statusCounts = getVehicleStatusCounts();
+  const vehicles = useMemo(() => {
+    return allVehicles.filter((vehicle) => {
+      if (filters.fleet && vehicle.fleet !== filters.fleet) return false;
+      if (filters.cargoType && vehicle.cargoType !== filters.cargoType) return false;
+      if (filters.arrivalTime) {
+        const arrivalDate = new Date(filters.arrivalTime);
+        arrivalDate.setHours(0, 0, 0, 0);
+        const vehicleArrival = new Date(vehicle.estimatedArrival);
+        vehicleArrival.setHours(0, 0, 0, 0);
+        if (arrivalDate.getTime() !== vehicleArrival.getTime()) return false;
+      }
+      if (filters.searchQuery) {
+        const query = filters.searchQuery.toLowerCase();
+        if (
+          !vehicle.plateNumber.toLowerCase().includes(query) &&
+          !vehicle.driverName.toLowerCase().includes(query) &&
+          !vehicle.cargoDescription.toLowerCase().includes(query)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [allVehicles, filters]);
+
+  const statusCounts = useMemo(() => {
+    return vehicles.reduce(
+      (counts, vehicle) => {
+        counts[vehicle.riskLevel || vehicle.currentStatus]++;
+        return counts;
+      },
+      { normal: 0, warning: 0, alert: 0 }
+    );
+  }, [vehicles]);
+
+  useEffect(() => {
+    initializeRiskLevels();
+  }, [initializeRiskLevels]);
 
   useEffect(() => {
     const interval = setInterval(() => {

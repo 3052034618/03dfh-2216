@@ -11,7 +11,9 @@ import type {
   DoorEvent,
   AlternativeRoute,
   RiskReason,
+  ExecutionFollowUpStatus,
 } from '@/types';
+import { DISPOSAL_TYPE_LABELS } from '@/types';
 import { mockVehicles, mockRouteSegments, mockServiceAreas, mockDoorEvents, mockAlternativeRoutes } from '@/mock/vehicles';
 import { mockTemperatureData, generateNewTemperatureReading } from '@/mock/temperature';
 import { mockDisposalRecords, generateDisposalRecord } from '@/mock/disposal';
@@ -162,8 +164,18 @@ interface AppState {
   getRiskReasonsForVehicle: (vehicleId: string) => RiskReason[];
   getAlternativeRoutes: (vehicleId: string) => AlternativeRoute[];
   updateTemperatures: () => void;
+  initializeRiskLevels: () => void;
   addDisposalRecord: (vehicleId: string, type: DisposalType, description?: string, extra?: Partial<DisposalRecord>) => void;
   updateDisposalRecordStatus: (id: string, status: 'pending' | 'completed', result?: string, followUpStatus?: DisposalRecord['followUpStatus']) => void;
+  updateDriverConfirmStatus: (recordId: string, status: DisposalRecord['driverConfirmStatus']) => void;
+  updateDetourExecutionStatus: (vehicleId: string, recordId: string, status: DisposalRecord['detourExecutionStatus']) => void;
+  updateExecutionFollowUp: (recordId: string, followUp: {
+    temperatureAfter?: number;
+    temperatureTrend?: number;
+    followUpStatus?: DisposalRecord['followUpStatus'];
+    executionFollowUpStatus?: DisposalRecord['executionFollowUpStatus'];
+    executionNotes?: string;
+  }) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -189,6 +201,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   setSelectedVehicleId: (id) => set({ selectedVehicleId: id }),
+
+  initializeRiskLevels: () => {
+    set((state) => {
+      const updatedVehicles = state.vehicles.map((vehicle) => {
+        const segments = state.routeSegments[vehicle.id] || [];
+        const { riskLevel, nearestRisk } = calculateOverallRisk(vehicle, segments);
+        return {
+          ...vehicle,
+          riskLevel,
+          nearestRisk,
+        };
+      });
+      return { vehicles: updatedVehicles };
+    });
+  },
 
   getFilteredVehicles: () => {
     const { vehicles, filters } = get();
@@ -335,14 +362,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().currentOperator
     );
 
+    const selectedAlternative = extra.alternativeRouteId
+      ? get().getAlternativeRoutes(vehicleId).find((r) => r.id === extra.alternativeRouteId)
+      : null;
+
     const newRecord: DisposalRecord = {
       ...baseRecord,
       temperatureBefore: vehicle.currentTemp,
       tempRange: { min: vehicle.targetTempMin, max: vehicle.targetTempMax },
       riskReasons,
       riskDescription,
-      selectedAction: type,
-      followUpStatus: 'stable',
+      selectedAction: extra.selectedAction || (DISPOSAL_TYPE_LABELS as any)[type] || type,
+      followUpStatus: extra.followUpStatus || 'stable',
+      riskLevelAtEvent: vehicle.riskLevel || vehicle.currentStatus,
+      driverConfirmStatus: extra.driverConfirmStatus || 'pending',
+      executionFollowUpStatus: extra.executionFollowUpStatus || 'waiting',
+      alternativeRouteName: selectedAlternative?.name,
       ...extra,
     };
 
@@ -361,6 +396,61 @@ export const useAppStore = create<AppState>((set, get) => ({
           status, 
           result,
           ...(followUpStatus ? { followUpStatus } : {}),
+        } : record
+      );
+      saveDisposalRecords(newRecords);
+      return { disposalRecords: newRecords };
+    });
+  },
+
+  updateDriverConfirmStatus: (recordId, status) => {
+    set((state) => {
+      const newRecords: DisposalRecord[] = state.disposalRecords.map((record) =>
+        record.id === recordId ? {
+          ...record,
+          driverConfirmStatus: status,
+          driverConfirmTime: new Date(),
+          executionFollowUpStatus: (status === 'confirmed' ? 'in_progress' : 'failed') as ExecutionFollowUpStatus,
+        } as DisposalRecord : record
+      );
+      saveDisposalRecords(newRecords);
+      return { disposalRecords: newRecords };
+    });
+  },
+
+  updateDetourExecutionStatus: (vehicleId, recordId, status) => {
+    set((state) => {
+      const newRecords: DisposalRecord[] = state.disposalRecords.map((record) =>
+        record.id === recordId ? {
+          ...record,
+          detourExecutionStatus: status,
+          executionFollowUpStatus: (status === 'completed' ? 'completed' : status === 'cancelled' ? 'failed' : 'in_progress') as ExecutionFollowUpStatus,
+        } as DisposalRecord : record
+      );
+      saveDisposalRecords(newRecords);
+
+      const newVehicles = state.vehicles.map((vehicle) =>
+        vehicle.id === vehicleId ? {
+          ...vehicle,
+          detourExecutionStatus: status,
+          activeAlternativeRouteId: status === 'completed' || status === 'in_progress'
+            ? newRecords.find((r) => r.id === recordId)?.alternativeRouteId
+            : undefined,
+        } : vehicle
+      );
+
+      return { disposalRecords: newRecords, vehicles: newVehicles };
+    });
+  },
+
+  updateExecutionFollowUp: (recordId, followUp) => {
+    set((state) => {
+      const newRecords = state.disposalRecords.map((record) =>
+        record.id === recordId ? {
+          ...record,
+          ...followUp,
+          followUpStatus: followUp.followUpStatus || record.followUpStatus,
+          executionFollowUpStatus: followUp.executionFollowUpStatus || record.executionFollowUpStatus,
         } : record
       );
       saveDisposalRecords(newRecords);

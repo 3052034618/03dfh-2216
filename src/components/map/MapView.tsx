@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle } from 'react-
 import L from 'leaflet';
 import { useNavigate } from 'react-router-dom';
 import { Thermometer, AlertTriangle, Clock, TrendingUp, MapPin } from 'lucide-react';
-import type { Vehicle, RouteSegment } from '@/types';
+import type { Vehicle, RouteSegment, AlternativeRoute, Position } from '@/types';
 import { ROUTE_SEGMENT_LABELS, CONGESTION_LEVEL_LABELS } from '@/types';
 import { formatTemperature, formatMileage, formatTime, formatDurationMinutes } from '@/utils/format';
 import 'leaflet/dist/leaflet.css';
@@ -14,6 +14,11 @@ interface MapViewProps {
   center?: [number, number];
   zoom?: number;
   selectedVehicleId?: string | null;
+  alternativeRoutes?: AlternativeRoute[];
+  selectedAlternativeRouteId?: string | null;
+  showAlternativeRoutes?: boolean;
+  playbackPosition?: Position | null;
+  playbackSegments?: RouteSegment[];
 }
 
 const createCustomIcon = (vehicle: Vehicle) => {
@@ -197,6 +202,11 @@ export const MapView = ({
   center = [35.8617, 104.1954], 
   zoom = 5,
   selectedVehicleId = null,
+  alternativeRoutes = [],
+  selectedAlternativeRouteId = null,
+  showAlternativeRoutes = false,
+  playbackPosition = null,
+  playbackSegments = [],
 }: MapViewProps) => {
   const navigate = useNavigate();
   const mapRef = useRef<L.Map | null>(null);
@@ -370,6 +380,115 @@ export const MapView = ({
             </div>
           );
         })}
+
+        {showAlternativeRoutes && alternativeRoutes.map((route) => {
+          const isSelected = selectedAlternativeRouteId === route.id;
+          const routeCoords = route.route.map((p) => [p.lat, p.lng] as [number, number]);
+
+          return (
+            <div key={route.id}>
+              <Polyline
+                positions={routeCoords}
+                color={isSelected ? '#A855F7' : '#6366F1'}
+                weight={isSelected ? 4 : 3}
+                opacity={isSelected ? 0.8 : 0.4}
+                dashArray={isSelected ? '10, 5' : '15, 10'}
+                className="alternative-route"
+              />
+
+              {route.riskSegments.filter(s => s.type !== 'normal').map((segment) => {
+                const segmentCoords: [number, number][] = [
+                  [segment.startPosition.lat, segment.startPosition.lng],
+                  [segment.endPosition.lat, segment.endPosition.lng],
+                ];
+                const color = getSegmentColor(segment.type);
+
+                return (
+                  <Polyline
+                    key={segment.id}
+                    positions={segmentCoords}
+                    color={color}
+                    weight={isSelected ? 6 : 4}
+                    opacity={isSelected ? 0.7 : 0.4}
+                    dashArray="6, 6"
+                    className="alternative-risk-segment"
+                  />
+                );
+              })}
+            </div>
+          );
+        })}
+
+        {playbackPosition && (
+          <Marker
+            position={[playbackPosition.lat, playbackPosition.lng]}
+            icon={L.divIcon({
+              className: 'playback-marker',
+              html: `
+                <div style="
+                  position: relative;
+                  width: 32px;
+                  height: 32px;
+                ">
+                  <div style="
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 24px;
+                    height: 24px;
+                    background: #A855F7;
+                    border-radius: 50%;
+                    border: 3px solid white;
+                    box-shadow: 0 0 15px rgba(168, 85, 247, 0.8);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    animation: pulse-playback 1.5s ease-in-out infinite;
+                  ">
+                    <div style="
+                      width: 8px;
+                      height: 8px;
+                      background: white;
+                      border-radius: 50%;
+                    "/>
+                  </div>
+                </div>
+              `,
+              iconSize: [32, 32],
+              iconAnchor: [16, 16],
+            })}
+          >
+            <Popup>
+              <div className="p-1">
+                <p className="font-semibold text-sm text-deep-blue">回放位置</p>
+              </div>
+            </Popup>
+          </Marker>
+        )}
+
+        {playbackSegments.length > 0 && playbackSegments.map((segment) => {
+          const segmentCoords: [number, number][] = [
+            [segment.startPosition.lat, segment.startPosition.lng],
+            [segment.endPosition.lat, segment.endPosition.lng],
+          ];
+          const color = getSegmentColor(segment.type);
+
+          return (
+            <Circle
+              key={segment.id}
+              center={[segment.startPosition.lat, segment.startPosition.lng]}
+              radius={6000}
+              pathOptions={{
+                color: '#A855F7',
+                fillColor: color,
+                fillOpacity: 0.3,
+                weight: 2,
+                dashArray: '3, 3',
+              }}
+            />
+          );
+        })}
       </MapContainer>
 
       <style>{`
@@ -411,6 +530,20 @@ export const MapView = ({
         @keyframes pulse-ring {
           0% { transform: scale(0.8); opacity: 1; }
           100% { transform: scale(1.5); opacity: 0; }
+        }
+        @keyframes pulse-playback {
+          0%, 100% { box-shadow: 0 0 15px rgba(168, 85, 247, 0.8); }
+          50% { box-shadow: 0 0 25px rgba(168, 85, 247, 1); }
+        }
+        .alternative-route {
+          pointer-events: none;
+        }
+        .alternative-risk-segment {
+          pointer-events: none;
+        }
+        .playback-marker {
+          background: transparent !important;
+          border: none !important;
         }
       `}</style>
     </div>

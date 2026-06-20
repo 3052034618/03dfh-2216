@@ -32,10 +32,16 @@ import { Modal } from '@/components/common/Modal';
 interface DetourDecisionPanelProps {
   vehicle: Vehicle;
   alternativeRoutes: AlternativeRoute[];
+  onRouteSelect?: (routeId: string | null) => void;
 }
 
-export const DetourDecisionPanel = ({ vehicle, alternativeRoutes }: DetourDecisionPanelProps) => {
+export const DetourDecisionPanel = ({ vehicle, alternativeRoutes, onRouteSelect }: DetourDecisionPanelProps) => {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+
+  const handleRouteSelect = (routeId: string | null) => {
+    setSelectedRouteId(routeId);
+    onRouteSelect?.(routeId);
+  };
   const [showConfirm, setShowConfirm] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -205,7 +211,7 @@ export const DetourDecisionPanel = ({ vehicle, alternativeRoutes }: DetourDecisi
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.3, delay: index * 0.1 }}
-                onClick={() => setSelectedRouteId(route.id)}
+                onClick={() => handleRouteSelect(route.id)}
                 className={`relative p-4 rounded-lg border-2 cursor-pointer transition-all duration-200 ${
                   isSelected
                     ? 'border-info bg-info/10'
