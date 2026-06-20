@@ -13,6 +13,7 @@ export default function Overview() {
     getVehicleStatusCounts,
     updateTemperatures,
     temperatureData,
+    routeSegments,
   } = useAppStore();
 
   const vehicles = getFilteredVehicles();
@@ -67,7 +68,7 @@ export default function Overview() {
 
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 relative">
-          <MapView vehicles={vehicles} />
+          <MapView vehicles={vehicles} routeSegments={routeSegments} />
 
           <div className="absolute top-4 right-4 z-[1000]">
             <motion.button
@@ -82,7 +83,7 @@ export default function Overview() {
           </div>
 
           <div className="absolute bottom-4 left-4 z-[1000] bg-deep-blue-800/90 backdrop-blur border border-deep-blue-700 rounded-lg p-3">
-            <p className="text-xs text-deep-blue-600 mb-2">状态图例</p>
+            <p className="text-xs text-deep-blue-600 mb-2">车辆状态</p>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-success" />
@@ -97,6 +98,18 @@ export default function Overview() {
                 <span className="text-xs text-white">告警</span>
               </div>
             </div>
+            <p className="text-xs text-deep-blue-600 mb-2 mt-3 pt-2 border-t border-deep-blue-700">风险路段</p>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-1 bg-warning rounded" />
+                <span className="text-xs text-white">拥堵路段</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-1 bg-danger rounded" />
+                <span className="text-xs text-white">高温路段</span>
+              </div>
+            </div>
+            <p className="text-xs text-deep-blue-500 mt-2">点击路段查看详情</p>
           </div>
         </div>
 

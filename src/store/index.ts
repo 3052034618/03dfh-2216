@@ -9,33 +9,40 @@ import type {
   RouteSegment,
   ServiceArea,
   DoorEvent,
+  AlternativeRoute,
+  RiskReason,
 } from '@/types';
-import { mockVehicles, mockRouteSegments, mockServiceAreas, mockDoorEvents } from '@/mock/vehicles';
+import { mockVehicles, mockRouteSegments, mockServiceAreas, mockDoorEvents, mockAlternativeRoutes } from '@/mock/vehicles';
 import { mockTemperatureData, generateNewTemperatureReading } from '@/mock/temperature';
 import { mockDisposalRecords, generateDisposalRecord } from '@/mock/disposal';
 
-interface AppState {
-  vehicles: Vehicle[];
-  temperatureData: Record<string, TemperatureReading[]>;
-  disposalRecords: DisposalRecord[];
-  routeSegments: Record<string, RouteSegment[]>;
-  serviceAreas: Record<string, ServiceArea[]>;
-  doorEvents: Record<string, DoorEvent[]>;
-  filters: FilterState;
-  selectedVehicleId: string | null;
-  currentOperator: string;
+const STORAGE_KEY = 'cold-chain-disposal-records';
 
-  setFilters: (filters: Partial<FilterState>) => void;
-  setSelectedVehicleId: (id: string | null) => void;
-  getFilteredVehicles: () => Vehicle[];
-  getVehicleById: (id: string) => Vehicle | undefined;
-  getVehicleStatusCounts: () => { normal: number; warning: number; alert: number };
-  updateTemperatures: () => void;
-  addDisposalRecord: (vehicleId: string, type: DisposalType, description?: string) => void;
-  updateDisposalRecordStatus: (id: string, status: 'pending' | 'completed', result?: string) => void;
-}
+const loadDisposalRecords = (): DisposalRecord[] => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const records = JSON.parse(stored);
+      return records.map((r: DisposalRecord) => ({
+        ...r,
+        timestamp: new Date(r.timestamp),
+      }));
+    }
+  } catch (e) {
+    console.error('Failed to load disposal records from localStorage:', e);
+  }
+  return mockDisposalRecords;
+};
 
-const determineVehicleStatus = (
+const saveDisposalRecords = (records: DisposalRecord[]) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  } catch (e) {
+    console.error('Failed to save disposal records to localStorage:', e);
+  }
+};
+
+const determineTempStatus = (
   currentTemp: number,
   minTemp: number,
   maxTemp: number
@@ -52,13 +59,110 @@ const determineVehicleStatus = (
   return 'normal';
 };
 
+const getRiskReasons = (
+  vehicle: Vehicle,
+  segments: RouteSegment[],
+  tempStatus: VehicleStatus
+): RiskReason[] => {
+  const reasons: RiskReason[] = [];
+  
+  if (tempStatus !== 'normal') {
+    reasons.push('temperature');
+  }
+  
+  const traveled = vehicle.traveledMileage || (vehicle.totalMileage - vehicle.remainingMileage);
+  const upcomingSegments = segments.filter((s) => s.startMileage >= traveled - 10 && s.type !== 'normal');
+  
+  upcomingSegments.forEach((seg) => {
+    if (seg.type === 'congestion') reasons.push('congestion');
+    if (seg.type === 'hotspot') reasons.push('hotspot');
+    if (seg.type === 'long_stop') reasons.push('long_stop');
+  });
+  
+  return [...new Set(reasons)];
+};
+
+const calculateOverallRisk = (
+  vehicle: Vehicle,
+  segments: RouteSegment[]
+): { riskLevel: VehicleStatus; nearestRisk?: Vehicle['nearestRisk'] } => {
+  const tempStatus = determineTempStatus(
+    vehicle.currentTemp,
+    vehicle.targetTempMin,
+    vehicle.targetTempMax
+  );
+  
+  const traveled = vehicle.traveledMileage || (vehicle.totalMileage - vehicle.remainingMileage);
+  const upcomingRiskSegments = segments
+    .filter((s) => s.type !== 'normal' && s.startMileage >= traveled - 5)
+    .sort((a, b) => a.startMileage - b.startMileage);
+  
+  let nearestRisk: Vehicle['nearestRisk'] | undefined;
+  if (upcomingRiskSegments.length > 0) {
+    const nearest = upcomingRiskSegments[0];
+    const distance = Math.max(0, nearest.startMileage - traveled);
+    nearestRisk = {
+      type: nearest.type,
+      description: nearest.description,
+      distance: Math.round(distance),
+      estimatedOverheatMinutes: nearest.estimatedOverheatTime,
+      estimatedTempRise: nearest.estimatedTempRise,
+    };
+  }
+  
+  let riskLevel: VehicleStatus = 'normal';
+  
+  if (tempStatus === 'alert') {
+    riskLevel = 'alert';
+  } else if (upcomingRiskSegments.some((s) => 
+    s.estimatedOverheatTime && s.estimatedOverheatTime < 20
+  )) {
+    riskLevel = 'alert';
+  } else if (upcomingRiskSegments.some((s) => s.type === 'hotspot')) {
+    riskLevel = 'warning';
+  } else if (upcomingRiskSegments.some((s) => s.type === 'congestion' && s.congestionLevel === 'severe')) {
+    riskLevel = 'warning';
+  } else if (tempStatus === 'warning') {
+    riskLevel = 'warning';
+  } else if (upcomingRiskSegments.length > 0) {
+    riskLevel = 'warning';
+  }
+  
+  return { riskLevel, nearestRisk };
+};
+
+interface AppState {
+  vehicles: Vehicle[];
+  temperatureData: Record<string, TemperatureReading[]>;
+  disposalRecords: DisposalRecord[];
+  routeSegments: Record<string, RouteSegment[]>;
+  serviceAreas: Record<string, ServiceArea[]>;
+  doorEvents: Record<string, DoorEvent[]>;
+  alternativeRoutes: Record<string, AlternativeRoute[]>;
+  filters: FilterState;
+  selectedVehicleId: string | null;
+  currentOperator: string;
+
+  setFilters: (filters: Partial<FilterState>) => void;
+  setSelectedVehicleId: (id: string | null) => void;
+  getFilteredVehicles: () => Vehicle[];
+  getVehicleById: (id: string) => Vehicle | undefined;
+  getVehicleStatusCounts: () => { normal: number; warning: number; alert: number };
+  getRiskReasonsForVehicle: (vehicleId: string) => RiskReason[];
+  getAlternativeRoutes: (vehicleId: string) => AlternativeRoute[];
+  updateTemperatures: () => void;
+  addDisposalRecord: (vehicleId: string, type: DisposalType, description?: string, extra?: Partial<DisposalRecord>) => void;
+  updateDisposalRecordStatus: (id: string, status: 'pending' | 'completed', result?: string, followUpStatus?: DisposalRecord['followUpStatus']) => void;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   vehicles: mockVehicles,
   temperatureData: mockTemperatureData,
-  disposalRecords: mockDisposalRecords,
+  disposalRecords: loadDisposalRecords(),
   routeSegments: mockRouteSegments,
   serviceAreas: mockServiceAreas,
   doorEvents: mockDoorEvents,
+  alternativeRoutes: mockAlternativeRoutes,
   filters: {
     fleet: null,
     cargoType: null,
@@ -109,11 +213,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     const vehicles = get().getFilteredVehicles();
     return vehicles.reduce(
       (counts, vehicle) => {
-        counts[vehicle.currentStatus]++;
+        counts[vehicle.riskLevel || vehicle.currentStatus]++;
         return counts;
       },
       { normal: 0, warning: 0, alert: 0 }
     );
+  },
+
+  getRiskReasonsForVehicle: (vehicleId) => {
+    const vehicle = get().getVehicleById(vehicleId);
+    const segments = get().routeSegments[vehicleId] || [];
+    if (!vehicle) return [];
+    const tempStatus = determineTempStatus(
+      vehicle.currentTemp,
+      vehicle.targetTempMin,
+      vehicle.targetTempMax
+    );
+    return getRiskReasons(vehicle, segments, tempStatus);
+  },
+
+  getAlternativeRoutes: (vehicleId) => {
+    return get().alternativeRoutes[vehicleId] || [];
   },
 
   updateTemperatures: () => {
@@ -133,16 +253,25 @@ export const useAppStore = create<AppState>((set, get) => ({
           const updatedReadings = [...readings.slice(1), newReading];
           newTemperatureData[vehicle.id] = updatedReadings;
           
-          const newStatus = determineVehicleStatus(
+          const tempStatus = determineTempStatus(
             newReading.temperature,
             vehicle.targetTempMin,
             vehicle.targetTempMax
           );
           
-          return {
+          const segments = state.routeSegments[vehicle.id] || [];
+          const updatedVehicle = {
             ...vehicle,
             currentTemp: newReading.temperature,
-            currentStatus: newStatus,
+            currentStatus: tempStatus,
+          };
+          
+          const { riskLevel, nearestRisk } = calculateOverallRisk(updatedVehicle, segments);
+          
+          return {
+            ...updatedVehicle,
+            riskLevel,
+            nearestRisk,
           };
         }
         return vehicle;
@@ -155,11 +284,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  addDisposalRecord: (vehicleId, type, description = '') => {
+  addDisposalRecord: (vehicleId, type, description = '', extra = {}) => {
     const vehicle = get().getVehicleById(vehicleId);
     if (!vehicle) return;
 
-    const newRecord = generateDisposalRecord(
+    const riskReasons = get().getRiskReasonsForVehicle(vehicleId);
+    const segments = get().routeSegments[vehicleId] || [];
+    const upcomingRisks = segments.filter(
+      (s) => s.type !== 'normal' && s.startMileage >= (vehicle.traveledMileage || vehicle.totalMileage - vehicle.remainingMileage) - 5
+    );
+    const riskDescription = upcomingRisks.length > 0 
+      ? upcomingRisks.map((r) => r.description).join('；')
+      : '温度异常';
+
+    const baseRecord = generateDisposalRecord(
       vehicleId,
       vehicle.plateNumber,
       type,
@@ -167,16 +305,36 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().currentOperator
     );
 
-    set((state) => ({
-      disposalRecords: [newRecord, ...state.disposalRecords],
-    }));
+    const newRecord: DisposalRecord = {
+      ...baseRecord,
+      temperatureBefore: vehicle.currentTemp,
+      tempRange: { min: vehicle.targetTempMin, max: vehicle.targetTempMax },
+      riskReasons,
+      riskDescription,
+      selectedAction: type,
+      followUpStatus: 'stable',
+      ...extra,
+    };
+
+    set((state) => {
+      const newRecords = [newRecord, ...state.disposalRecords];
+      saveDisposalRecords(newRecords);
+      return { disposalRecords: newRecords };
+    });
   },
 
-  updateDisposalRecordStatus: (id, status, result) => {
-    set((state) => ({
-      disposalRecords: state.disposalRecords.map((record) =>
-        record.id === id ? { ...record, status, result } : record
-      ),
-    }));
+  updateDisposalRecordStatus: (id, status, result, followUpStatus) => {
+    set((state) => {
+      const newRecords = state.disposalRecords.map((record) =>
+        record.id === id ? { 
+          ...record, 
+          status, 
+          result,
+          ...(followUpStatus ? { followUpStatus } : {}),
+        } : record
+      );
+      saveDisposalRecords(newRecords);
+      return { disposalRecords: newRecords };
+    });
   },
 }));

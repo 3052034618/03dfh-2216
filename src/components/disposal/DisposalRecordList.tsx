@@ -1,8 +1,30 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, User, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Filter } from 'lucide-react';
+import { 
+  Clock, 
+  User, 
+  CheckCircle, 
+  AlertCircle, 
+  ChevronDown, 
+  ChevronUp, 
+  Filter,
+  Thermometer,
+  AlertTriangle,
+  TrendingUp,
+  Route,
+  Activity
+} from 'lucide-react';
 import type { DisposalRecord, DisposalType } from '@/types';
-import { getDisposalTypeLabel, formatFullDateTime, getRelativeTime } from '@/utils/format';
+import { 
+  getDisposalTypeLabel, 
+  formatFullDateTime, 
+  getRelativeTime,
+  formatTemperature,
+  getRiskReasonLabel,
+  getRiskReasonColor,
+  getFollowUpStatusLabel,
+  getFollowUpStatusColor,
+} from '@/utils/format';
 import { DISPOSAL_TYPE_LABELS } from '@/types';
 
 interface DisposalRecordListProps {
@@ -121,8 +143,32 @@ export const DisposalRecordList = ({ records, showFilters = true }: DisposalReco
                         >
                           {record.status === 'completed' ? '已完成' : '待处理'}
                         </span>
+                        {record.routeChange && (
+                          <span className="text-xs bg-success/10 text-success px-2 py-0.5 rounded flex items-center gap-1">
+                            <Route className="w-3 h-3" />
+                            已改线
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm text-deep-blue-600 truncate">{record.description}</p>
+                      
+                      {record.riskReasons && record.riskReasons.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {record.riskReasons.slice(0, 3).map((reason) => (
+                            <span
+                              key={reason}
+                              className={`text-xs px-1.5 py-0.5 rounded ${getRiskReasonColor(reason)} bg-current/10`}
+                            >
+                              {getRiskReasonLabel(reason)}
+                            </span>
+                          ))}
+                          {record.riskReasons.length > 3 && (
+                            <span className="text-xs text-deep-blue-600">
+                              +{record.riskReasons.length - 3}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="text-right flex-shrink-0">
@@ -160,6 +206,67 @@ export const DisposalRecordList = ({ records, showFilters = true }: DisposalReco
                             </span>
                           </div>
                         </div>
+
+                        {record.temperatureBefore !== undefined && record.tempRange && (
+                          <div className="mt-4 p-3 bg-deep-blue-800/50 rounded-lg border border-deep-blue-700">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Thermometer className="w-4 h-4 text-warning" />
+                              <span className="text-sm font-medium text-white">处置时温度</span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div>
+                                <span className="text-xs text-deep-blue-600">当前温度</span>
+                                <p className={`text-lg font-bold font-mono ${
+                                  record.temperatureBefore > record.tempRange.max ? 'text-danger' :
+                                  record.temperatureBefore > record.tempRange.max - 1 ? 'text-warning' : 'text-success'
+                                }`}>
+                                  {formatTemperature(record.temperatureBefore)}
+                                </p>
+                              </div>
+                              <div className="flex-1">
+                                <span className="text-xs text-deep-blue-600">设定温区</span>
+                                <p className="text-sm text-white font-mono">
+                                  {formatTemperature(record.tempRange.min)} ~ {formatTemperature(record.tempRange.max)}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {record.riskDescription && (
+                          <div className="mt-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-xs text-warning font-medium mb-1">风险原因</p>
+                                <p className="text-sm text-white">{record.riskDescription}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {record.followUpStatus && (
+                          <div className="mt-3 p-3 bg-info/10 border border-info/30 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-info" />
+                              <span className="text-xs text-info font-medium">后续状态</span>
+                              <span className={`text-sm font-medium ${getFollowUpStatusColor(record.followUpStatus)}`}>
+                                {getFollowUpStatusLabel(record.followUpStatus)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {record.selectedAction && (
+                          <div className="mt-3 p-3 bg-success/10 border border-success/30 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <TrendingUp className="w-4 h-4 text-success" />
+                              <span className="text-xs text-success font-medium">处置方式</span>
+                              <span className="text-sm text-white">{record.selectedAction}</span>
+                            </div>
+                          </div>
+                        )}
+
                         {record.result && (
                           <div className="mt-3 p-3 bg-success/10 border border-success/30 rounded-lg">
                             <p className="text-xs text-success font-medium mb-1">处置结果</p>

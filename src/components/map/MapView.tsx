@@ -1,27 +1,31 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import { useNavigate } from 'react-router-dom';
-import { Thermometer, AlertTriangle } from 'lucide-react';
-import type { Vehicle } from '@/types';
-import { formatTemperature, getStatusColor, getStatusLabel, formatMileage, formatTime } from '@/utils/format';
+import { Thermometer, AlertTriangle, Clock, TrendingUp, MapPin } from 'lucide-react';
+import type { Vehicle, RouteSegment } from '@/types';
+import { ROUTE_SEGMENT_LABELS, CONGESTION_LEVEL_LABELS } from '@/types';
+import { formatTemperature, formatMileage, formatTime, formatDurationMinutes } from '@/utils/format';
 import 'leaflet/dist/leaflet.css';
 
 interface MapViewProps {
   vehicles: Vehicle[];
+  routeSegments?: Record<string, RouteSegment[]>;
   center?: [number, number];
   zoom?: number;
+  selectedVehicleId?: string | null;
 }
 
 const createCustomIcon = (vehicle: Vehicle) => {
+  const displayStatus = vehicle.riskLevel || vehicle.currentStatus;
   const statusColors = {
     normal: '#10B981',
     warning: '#F59E0B',
     alert: '#EF4444',
   };
   
-  const color = statusColors[vehicle.currentStatus];
-  const isAlert = vehicle.currentStatus === 'alert';
+  const color = statusColors[displayStatus];
+  const isAlert = displayStatus === 'alert';
   
   return L.divIcon({
     className: 'custom-marker',
@@ -90,9 +94,113 @@ const createCustomIcon = (vehicle: Vehicle) => {
   });
 };
 
-export const MapView = ({ vehicles, center = [35.8617, 104.1954], zoom = 5 }: MapViewProps) => {
+const getSegmentColor = (type: RouteSegment['type']): string => {
+  const colors: Record<string, string> = {
+    normal: '#38BDF8',
+    congestion: '#F59E0B',
+    hotspot: '#EF4444',
+    long_stop: '#F59E0B',
+  };
+  return colors[type] || '#38BDF8';
+};
+
+const SegmentPopup = ({ segment }: { segment: RouteSegment }) => {
+  const isRisk = segment.type !== 'normal';
+
+  return (
+    <div className="min-w-[220px] p-1">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div
+            className="w-2.5 h-2.5 rounded-full"
+            style={{ backgroundColor: getSegmentColor(segment.type) }}
+          />
+          <h4 className="font-bold text-white text-sm">
+            {ROUTE_SEGMENT_LABELS[segment.type]}
+          </h4>
+        </div>
+        {isRisk && (
+          <span className="text-xs bg-danger/20 text-danger px-2 py-0.5 rounded font-medium">
+            风险路段
+          </span>
+        )}
+      </div>
+
+      <p className="text-sm text-deep-blue-600 mb-3">{segment.description}</p>
+
+      <div className="space-y-2 text-sm">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-3.5 h-3.5 text-deep-blue-600" />
+          <span className="text-deep-blue-600">里程:</span>
+          <span className="text-white font-mono">
+            {segment.startMileage} - {segment.endMileage} km
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-3.5 h-3.5 text-warning" />
+          <span className="text-deep-blue-600">预计升温:</span>
+          <span className="text-warning font-mono font-bold">
+            +{segment.estimatedTempRise.toFixed(1)}℃
+          </span>
+        </div>
+
+        {segment.estimatedOverheatTime && (
+          <div className="flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-danger" />
+            <span className="text-deep-blue-600">预计超温:</span>
+            <span className={`font-mono font-bold ${
+              segment.estimatedOverheatTime < 20 ? 'text-danger' : 'text-warning'
+            }`}>
+              {formatDurationMinutes(segment.estimatedOverheatTime)}后
+            </span>
+          </div>
+        )}
+
+        {segment.congestionLevel && (
+          <div className="flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-warning" />
+            <span className="text-deep-blue-600">拥堵等级:</span>
+            <span className="text-warning">
+              {CONGESTION_LEVEL_LABELS[segment.congestionLevel]}
+            </span>
+          </div>
+        )}
+
+        {segment.historicalHighTemp !== undefined && (
+          <div className="flex items-center gap-2">
+            <Thermometer className="w-3.5 h-3.5 text-danger" />
+            <span className="text-deep-blue-600">历史最高:</span>
+            <span className="text-danger font-mono">
+              {formatTemperature(segment.historicalHighTemp)}
+            </span>
+          </div>
+        )}
+
+        {segment.stopDuration && (
+          <div className="flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-warning" />
+            <span className="text-deep-blue-600">预计停车:</span>
+            <span className="text-warning font-mono">
+              {formatDurationMinutes(segment.stopDuration)}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const MapView = ({ 
+  vehicles, 
+  routeSegments = {}, 
+  center = [35.8617, 104.1954], 
+  zoom = 5,
+  selectedVehicleId = null,
+}: MapViewProps) => {
   const navigate = useNavigate();
   const mapRef = useRef<L.Map | null>(null);
+  const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
 
   useEffect(() => {
     if (vehicles.length > 0 && mapRef.current) {
@@ -102,12 +210,13 @@ export const MapView = ({ vehicles, center = [35.8617, 104.1954], zoom = 5 }: Ma
   }, [vehicles.length]);
 
   const getRouteColor = (vehicle: Vehicle) => {
+    const displayStatus = vehicle.riskLevel || vehicle.currentStatus;
     const colors = {
       normal: '#38BDF8',
       warning: '#F59E0B',
       alert: '#EF4444',
     };
-    return colors[vehicle.currentStatus];
+    return colors[displayStatus];
   };
 
   return (
@@ -127,32 +236,78 @@ export const MapView = ({ vehicles, center = [35.8617, 104.1954], zoom = 5 }: Ma
 
         {vehicles.map((vehicle) => {
           const routeCoords = vehicle.route.map((p) => [p.lat, p.lng] as [number, number]);
-          const alertSegments = vehicle.currentStatus !== 'normal' ? [vehicle.currentPosition] : [];
+          const segments = routeSegments[vehicle.id] || [];
+          const displayStatus = vehicle.riskLevel || vehicle.currentStatus;
+          const isSelected = selectedVehicleId === vehicle.id;
 
           return (
             <div key={vehicle.id}>
               <Polyline
                 positions={routeCoords}
                 color={getRouteColor(vehicle)}
-                weight={3}
-                opacity={0.6}
-                dashArray="10, 10"
+                weight={isSelected ? 4 : 2.5}
+                opacity={isSelected ? 0.8 : 0.5}
+                dashArray="8, 8"
                 className="route-line"
               />
 
-              {alertSegments.map((pos, idx) => (
+              {segments.filter(s => s.type !== 'normal').map((segment) => {
+                const segmentCoords: [number, number][] = [
+                  [segment.startPosition.lat, segment.startPosition.lng],
+                  [segment.endPosition.lat, segment.endPosition.lng],
+                ];
+                const isHovered = hoveredSegment === segment.id;
+                const color = getSegmentColor(segment.type);
+
+                return (
+                  <div key={segment.id}>
+                    <Polyline
+                      positions={segmentCoords}
+                      color={color}
+                      weight={isHovered ? 8 : 5}
+                      opacity={isHovered ? 0.9 : 0.7}
+                      className="risk-segment"
+                      pathOptions={{
+                        className: `risk-segment ${isHovered ? 'hovered' : ''}`,
+                      }}
+                      eventHandlers={{
+                        mouseover: () => setHoveredSegment(segment.id),
+                        mouseout: () => setHoveredSegment(null),
+                      }}
+                    >
+                      <Popup className="segment-popup">
+                        <SegmentPopup segment={segment} />
+                      </Popup>
+                    </Polyline>
+
+                    <Circle
+                      center={[segment.startPosition.lat, segment.startPosition.lng]}
+                      radius={segment.type === 'hotspot' ? 8000 : 5000}
+                      pathOptions={{
+                        color: color,
+                        fillColor: color,
+                        fillOpacity: 0.2,
+                        weight: 1,
+                        dashArray: '4, 4',
+                      }}
+                    />
+                  </div>
+                );
+              })}
+
+              {displayStatus !== 'normal' && vehicle.nearestRisk && (
                 <Circle
-                  key={`alert-${vehicle.id}-${idx}`}
-                  center={[pos.lat, pos.lng]}
-                  radius={15000}
+                  center={[vehicle.currentPosition.lat, vehicle.currentPosition.lng]}
+                  radius={displayStatus === 'alert' ? 20000 : 12000}
                   pathOptions={{
-                    color: vehicle.currentStatus === 'alert' ? '#EF4444' : '#F59E0B',
-                    fillColor: vehicle.currentStatus === 'alert' ? '#EF4444' : '#F59E0B',
-                    fillOpacity: 0.15,
+                    color: displayStatus === 'alert' ? '#EF4444' : '#F59E0B',
+                    fillColor: displayStatus === 'alert' ? '#EF4444' : '#F59E0B',
+                    fillOpacity: 0.12,
                     weight: 2,
+                    className: 'pulse-circle',
                   }}
                 />
-              ))}
+              )}
 
               <Marker
                 position={[vehicle.currentPosition.lat, vehicle.currentPosition.lng]}
@@ -160,20 +315,30 @@ export const MapView = ({ vehicles, center = [35.8617, 104.1954], zoom = 5 }: Ma
                 eventHandlers={{
                   click: () => navigate(`/detail/${vehicle.id}`),
                 }}
+                zIndexOffset={isSelected ? 1000 : 0}
               >
                 <Popup className="custom-popup">
                   <div className="min-w-[200px] p-1">
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="font-bold font-mono text-deep-blue">{vehicle.plateNumber}</h4>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${getStatusColor(vehicle.currentStatus)} bg-current/10`}>
-                        {getStatusLabel(vehicle.currentStatus)}
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded bg-current/10 ${
+                        displayStatus === 'alert' ? 'text-danger' : 
+                        displayStatus === 'warning' ? 'text-warning' : 'text-success'
+                      }`}>
+                        {displayStatus === 'alert' ? '告警' : displayStatus === 'warning' ? '预警' : '正常'}
                       </span>
                     </div>
                     <div className="space-y-1 text-sm">
                       <div className="flex items-center gap-2">
-                        <Thermometer className={`w-4 h-4 ${getStatusColor(vehicle.currentStatus)}`} />
+                        <Thermometer className={`w-4 h-4 ${
+                          vehicle.currentStatus === 'alert' ? 'text-danger' : 
+                          vehicle.currentStatus === 'warning' ? 'text-warning' : 'text-success'
+                        }`} />
                         <span className="text-deep-blue-600">温度:</span>
-                        <span className={`font-mono font-bold ${getStatusColor(vehicle.currentStatus)}`}>
+                        <span className={`font-mono font-bold ${
+                          vehicle.currentStatus === 'alert' ? 'text-danger' : 
+                          vehicle.currentStatus === 'warning' ? 'text-warning' : 'text-success'
+                        }`}>
                           {formatTemperature(vehicle.currentTemp)}
                         </span>
                       </div>
@@ -186,12 +351,17 @@ export const MapView = ({ vehicles, center = [35.8617, 104.1954], zoom = 5 }: Ma
                         <span className="text-deep-blue font-mono">{formatTime(vehicle.estimatedArrival)}</span>
                       </div>
                     </div>
-                    {vehicle.currentStatus !== 'normal' && (
+                    {vehicle.nearestRisk && (
                       <div className="mt-2 pt-2 border-t border-deep-blue-700/30">
                         <div className="flex items-center gap-1 text-warning text-xs">
                           <AlertTriangle className="w-3 h-3" />
-                          <span>点击查看详情并处置</span>
+                          <span>前方{vehicle.nearestRisk.distance}公里: {vehicle.nearestRisk.description}</span>
                         </div>
+                      </div>
+                    )}
+                    {displayStatus !== 'normal' && (
+                      <div className="mt-2 text-center">
+                        <span className="text-xs text-info">点击查看详情并处置 →</span>
                       </div>
                     )}
                   </div>
@@ -215,9 +385,32 @@ export const MapView = ({ vehicles, center = [35.8617, 104.1954], zoom = 5 }: Ma
         .custom-popup .leaflet-popup-tip {
           background: #1E293B;
         }
+        .segment-popup .leaflet-popup-content-wrapper {
+          background: #1E293B;
+          border-radius: 8px;
+          border: 1px solid #334155;
+        }
+        .segment-popup .leaflet-popup-content {
+          margin: 8px;
+          color: #E2E8F0;
+        }
+        .segment-popup .leaflet-popup-tip {
+          background: #1E293B;
+        }
         @keyframes breathing {
           0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
           50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+        }
+        .risk-segment {
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .pulse-circle {
+          animation: pulse-ring 2s ease-out infinite;
+        }
+        @keyframes pulse-ring {
+          0% { transform: scale(0.8); opacity: 1; }
+          100% { transform: scale(1.5); opacity: 0; }
         }
       `}</style>
     </div>

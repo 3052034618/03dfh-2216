@@ -1,6 +1,7 @@
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import type { VehicleStatus, CargoType, DisposalType, RouteSegmentType } from '@/types';
+import type { VehicleStatus, CargoType, DisposalType, RouteSegmentType, RiskReason, DisposalRecord } from '@/types';
+import { RISK_REASON_LABELS, ROUTE_SEGMENT_LABELS, FOLLOW_UP_STATUS_LABELS } from '@/types';
 
 export const formatTemperature = (temp: number): string => {
   return `${temp > 0 ? '+' : ''}${temp.toFixed(1)}℃`;
@@ -119,7 +120,8 @@ export const getRouteSegmentLabel = (type: RouteSegmentType): string => {
   const labels: Record<RouteSegmentType, string> = {
     normal: '正常路段',
     congestion: '拥堵路段',
-    hotspot: '高温路段',
+    hotspot: '历史高温路段',
+    long_stop: '长时间停车',
   };
   return labels[type] || type;
 };
@@ -134,4 +136,66 @@ export const getRelativeTime = (date: Date): string => {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}小时前`;
   return format(date, 'MM-dd', { locale: zhCN });
+};
+
+export const getRiskReasonLabel = (reason: RiskReason): string => {
+  return RISK_REASON_LABELS[reason] || reason;
+};
+
+export const getRiskReasonColor = (reason: RiskReason): string => {
+  switch (reason) {
+    case 'congestion':
+      return 'text-warning';
+    case 'hotspot':
+      return 'text-danger';
+    case 'long_stop':
+      return 'text-warning';
+    case 'temperature':
+      return 'text-info';
+    case 'door_open':
+      return 'text-danger';
+    default:
+      return 'text-info';
+  }
+};
+
+export const getFollowUpStatusLabel = (status: string): string => {
+  return FOLLOW_UP_STATUS_LABELS[status] || status;
+};
+
+export const getFollowUpStatusColor = (status: string): string => {
+  switch (status) {
+    case 'improving':
+      return 'text-success';
+    case 'stable':
+      return 'text-info';
+    case 'worsening':
+      return 'text-warning';
+    case 'resolved':
+      return 'text-success';
+    default:
+      return 'text-deep-blue-600';
+  }
+};
+
+export const getRouteSegmentBgClass = (type: RouteSegmentType): string => {
+  switch (type) {
+    case 'normal':
+      return 'bg-info/10';
+    case 'congestion':
+      return 'bg-warning/10';
+    case 'hotspot':
+      return 'bg-danger/10';
+    case 'long_stop':
+      return 'bg-warning/10';
+    default:
+      return 'bg-info/10';
+  }
+};
+
+export const formatDurationMinutes = (minutes: number): string => {
+  if (minutes < 60) return `${minutes}分钟`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `${hours}小时${mins}分` : `${hours}小时`;
 };

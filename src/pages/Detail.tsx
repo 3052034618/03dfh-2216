@@ -14,12 +14,14 @@ import {
   DoorOpen,
   Coffee,
   Gauge,
+  Route,
 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { TemperatureChart } from '@/components/temperature/TemperatureChart';
 import { DoorEventTimeline } from '@/components/vehicle/DoorEventTimeline';
 import { ServiceAreaList } from '@/components/vehicle/ServiceAreaList';
 import { RiskSegmentList } from '@/components/vehicle/RiskSegmentList';
+import { DetourDecisionPanel } from '@/components/vehicle/DetourDecisionPanel';
 import { DisposalButtons } from '@/components/disposal/DisposalButtons';
 import {
   formatTemperature,
@@ -36,7 +38,7 @@ import type { Vehicle } from '@/types';
 export default function Detail() {
   const { vehicleId } = useParams<{ vehicleId: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'temperature' | 'doors' | 'services' | 'risks'>('temperature');
+  const [activeTab, setActiveTab] = useState<'temperature' | 'risks' | 'detour' | 'doors' | 'services'>('temperature');
 
   const vehicles = useAppStore((state) => state.vehicles);
   const vehicle = useMemo(() => vehicles.find((v) => v.id === vehicleId), [vehicles, vehicleId]);
@@ -44,6 +46,7 @@ export default function Detail() {
   const doorEvents = useAppStore((state) => state.doorEvents[vehicleId || ''] || []);
   const serviceAreas = useAppStore((state) => state.serviceAreas[vehicleId || ''] || []);
   const routeSegments = useAppStore((state) => state.routeSegments[vehicleId || ''] || []);
+  const alternativeRoutes = useAppStore((state) => state.getAlternativeRoutes(vehicleId || ''));
   const updateTemperatures = useAppStore((state) => state.updateTemperatures);
 
   useEffect(() => {
@@ -74,13 +77,15 @@ export default function Detail() {
 
   const tabs = [
     { id: 'temperature', label: '温度曲线', icon: Thermometer },
+    { id: 'risks', label: '风险路段', icon: TrendingUp },
+    { id: 'detour', label: '绕行决策', icon: Route, badge: alternativeRoutes.length > 0 },
     { id: 'doors', label: '开关门记录', icon: DoorOpen },
     { id: 'services', label: '前方服务区', icon: Coffee },
-    { id: 'risks', label: '风险路段', icon: TrendingUp },
   ] as const;
 
-  const isWarning = vehicle.currentStatus === 'warning';
-  const isAlert = vehicle.currentStatus === 'alert';
+  const displayStatus = vehicle.riskLevel || vehicle.currentStatus;
+  const isWarning = displayStatus === 'warning';
+  const isAlert = displayStatus === 'alert';
 
   return (
     <div className="h-full flex flex-col bg-deep-blue overflow-hidden">
@@ -98,11 +103,11 @@ export default function Detail() {
             <div className="flex items-center gap-3 mb-1">
               <h1 className="text-xl font-bold font-mono text-white">{vehicle.plateNumber}</h1>
               <span
-                className={`text-xs font-medium px-2.5 py-1 rounded ${getStatusBgColor(vehicle.currentStatus)} ${getStatusColor(vehicle.currentStatus)} ${
+                className={`text-xs font-medium px-2.5 py-1 rounded ${getStatusBgColor(displayStatus)} ${getStatusColor(displayStatus)} ${
                   isAlert ? 'animate-pulse' : ''
                 }`}
               >
-                {getStatusLabel(vehicle.currentStatus)}
+                {getStatusLabel(displayStatus)}
               </span>
               <span className="text-xs bg-deep-blue-700/50 text-deep-blue-600 px-2 py-1 rounded">
                 {vehicle.fleet}
@@ -121,6 +126,13 @@ export default function Detail() {
               <div className="text-xs text-deep-blue-600 mt-1">
                 设定: {formatTemperature(vehicle.targetTempMin)} ~ {formatTemperature(vehicle.targetTempMax)}
               </div>
+              {vehicle.nearestRisk && (
+                <div className="mt-2 text-xs">
+                  <span className="text-warning">
+                    前方 {vehicle.nearestRisk.distance}km 有风险
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -143,16 +155,27 @@ export default function Detail() {
 
       {(isWarning || isAlert) && (
         <div className="p-4">
-          <div className="bg-danger/10 border border-danger/30 rounded-lg p-4">
+          <div className={`border rounded-lg p-4 ${isAlert ? 'bg-danger/10 border-danger/30' : 'bg-warning/10 border-warning/30'}`}>
             <div className="flex items-start gap-3 mb-4">
-              <AlertTriangle className="w-6 h-6 text-danger flex-shrink-0 mt-0.5" />
+              <AlertTriangle className={`w-6 h-6 flex-shrink-0 mt-0.5 ${isAlert ? 'text-danger' : 'text-warning'}`} />
               <div>
-                <h3 className="text-lg font-semibold text-danger mb-1">温度预警</h3>
+                <h3 className={`text-lg font-semibold mb-1 ${isAlert ? 'text-danger' : 'text-warning'}`}>
+                  {isAlert ? '温度告警' : '温度预警'}
+                </h3>
                 <p className="text-sm text-deep-blue-600">
                   当前温度 {formatTemperature(vehicle.currentTemp)}，
-                  {isAlert ? '已超出' : '接近'}设定温区上限 {formatTemperature(vehicle.targetTempMax)}，
-                  请立即采取处置措施。
+                  {vehicle.nearestRisk
+                    ? `前方${vehicle.nearestRisk.distance}公里有${vehicle.nearestRisk.description}，预计升温+${vehicle.nearestRisk.estimatedTempRise.toFixed(1)}℃`
+                    : isAlert
+                    ? '已超出设定温区上限'
+                    : '接近设定温区上限'}
+                  ，请立即采取处置措施。
                 </p>
+                {vehicle.nearestRisk?.estimatedOverheatMinutes && (
+                  <p className="text-xs mt-1 text-warning font-medium">
+                    预计 {vehicle.nearestRisk.estimatedOverheatMinutes} 分钟后超温
+                  </p>
+                )}
               </div>
             </div>
             <DisposalButtons vehicleId={vehicle.id} compact />
@@ -166,11 +189,12 @@ export default function Detail() {
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
+              const hasBadge = (tab as any).badge;
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2 ${
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2 relative ${
                     isActive
                       ? 'text-info border-info bg-info/5'
                       : 'text-deep-blue-600 border-transparent hover:text-white hover:bg-deep-blue-700/30'
@@ -178,6 +202,9 @@ export default function Detail() {
                 >
                   <Icon className="w-4 h-4" />
                   {tab.label}
+                  {hasBadge && (
+                    <span className="w-2 h-2 bg-danger rounded-full absolute top-3 right-4 animate-pulse" />
+                  )}
                 </button>
               );
             })}
@@ -229,6 +256,37 @@ export default function Detail() {
                 </div>
               )}
 
+              {activeTab === 'risks' && (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">风险路段分析</h3>
+                    <span className="text-sm text-deep-blue-600">
+                      基于历史数据和实时路况
+                    </span>
+                  </div>
+                  <RiskSegmentList segments={routeSegments} />
+                </div>
+              )}
+
+              {activeTab === 'detour' && (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-semibold text-white">绕行决策方案</h3>
+                      {alternativeRoutes.length > 0 && (
+                        <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">
+                          {alternativeRoutes.length} 条备选
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-sm text-deep-blue-600">
+                      对比后选择最优路线
+                    </span>
+                  </div>
+                  <DetourDecisionPanel vehicle={vehicle} alternativeRoutes={alternativeRoutes} />
+                </div>
+              )}
+
               {activeTab === 'doors' && (
                 <div>
                   <div className="flex items-center justify-between mb-4">
@@ -252,18 +310,6 @@ export default function Detail() {
                     </span>
                   </div>
                   <ServiceAreaList serviceAreas={serviceAreas} />
-                </div>
-              )}
-
-              {activeTab === 'risks' && (
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-white">风险路段分析</h3>
-                    <span className="text-sm text-deep-blue-600">
-                      基于历史数据和实时路况
-                    </span>
-                  </div>
-                  <RiskSegmentList segments={routeSegments} />
                 </div>
               )}
             </motion.div>
