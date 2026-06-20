@@ -5,9 +5,10 @@ import { getRouteSegmentColor, getRouteSegmentLabel, formatTemperature } from '@
 
 interface RiskSegmentListProps {
   segments: RouteSegment[];
+  highlightTime?: Date | null;
 }
 
-export const RiskSegmentList = ({ segments }: RiskSegmentListProps) => {
+export const RiskSegmentList = ({ segments, highlightTime }: RiskSegmentListProps) => {
   const riskSegments = segments.filter((s) => s.type !== 'normal');
 
   if (riskSegments.length === 0) {

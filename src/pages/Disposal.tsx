@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
   AlertTriangle,
@@ -10,20 +10,24 @@ import {
   Navigation,
   MessageSquare,
   TrendingDown,
+  UserCheck,
+  Route,
+  Activity,
 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { StatsCard } from '@/components/common/StatsCard';
-import { DisposalRecordList } from '@/components/disposal/DisposalRecordList';
+import { ExecutionProgress } from '@/components/vehicle/ExecutionProgress';
 import { VehicleCard } from '@/components/vehicle/VehicleCard';
 import { Button } from '@/components/common/Button';
 
 export default function Disposal() {
-  const { disposalRecords, getFilteredVehicles, updateDisposalRecordStatus } = useAppStore();
+  const { disposalRecords, getFilteredVehicles, vehicles } = useAppStore();
   const [activeTab, setActiveTab] = useState<'pending' | 'completed' | 'all'>('pending');
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
 
-  const vehicles = getFilteredVehicles();
-  const alertVehicles = vehicles.filter((v) => v.currentStatus === 'alert');
-  const warningVehicles = vehicles.filter((v) => v.currentStatus === 'warning');
+  const filteredVehicles = getFilteredVehicles();
+  const alertVehicles = filteredVehicles.filter((v) => v.currentStatus === 'alert');
+  const warningVehicles = filteredVehicles.filter((v) => v.currentStatus === 'warning');
 
   const pendingRecords = disposalRecords.filter((r) => r.status === 'pending');
   const completedRecords = disposalRecords.filter((r) => r.status === 'completed');
@@ -35,9 +39,20 @@ export default function Disposal() {
       ? pendingRecords
       : completedRecords;
 
-  const handleMarkComplete = (id: string) => {
-    updateDisposalRecordStatus(id, 'completed', '已完成处置，司机反馈正常');
-  };
+  const vehiclesWithRecords = useMemo(() => {
+    const ids = new Set(displayedRecords.map((r) => r.vehicleId));
+    return vehicles.filter((v) => ids.has(v.id));
+  }, [vehicles, displayedRecords]);
+
+  const selectedVehicle = selectedVehicleId
+    ? vehicles.find((v) => v.id === selectedVehicleId) || null
+    : null;
+
+  const tabs = [
+    { id: 'pending', label: '待处理', count: pendingRecords.length, color: 'warning' },
+    { id: 'completed', label: '已完成', count: completedRecords.length, color: 'success' },
+    { id: 'all', label: '全部记录', count: disposalRecords.length, color: 'info' },
+  ] as const;
 
   const quickActions = [
     {
@@ -58,16 +73,10 @@ export default function Disposal() {
       icon: MessageSquare,
       label: '联系收货方',
       desc: '批量通知可能延误的收货方',
-      count: Math.round(vehicles.length * 0.3),
+      count: Math.round(filteredVehicles.length * 0.3),
       color: 'info',
     },
   ];
-
-  const tabs = [
-    { id: 'pending', label: '待处理', count: pendingRecords.length, color: 'warning' },
-    { id: 'completed', label: '已完成', count: completedRecords.length, color: 'success' },
-    { id: 'all', label: '全部记录', count: disposalRecords.length, color: 'info' },
-  ] as const;
 
   return (
     <div className="h-full flex flex-col bg-deep-blue overflow-hidden">
@@ -218,12 +227,122 @@ export default function Disposal() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Filter className="w-5 h-5 text-info" />
-              处置记录
-            </h3>
-            <DisposalRecordList records={displayedRecords} showFilters={false} />
+          <div className="flex-1 overflow-hidden flex">
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <Filter className="w-5 h-5 text-info" />
+                处置车辆列表
+                <span className="text-xs text-deep-blue-600 font-normal">
+                  共 {vehiclesWithRecords.length} 辆车
+                </span>
+              </h3>
+
+              {vehiclesWithRecords.length === 0 ? (
+                <div className="text-center py-12 text-deep-blue-600">
+                  <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">暂无符合条件的处置记录</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {vehiclesWithRecords.map((vehicle) => {
+                    const vehiclePendingCount = displayedRecords.filter(
+                      (r) => r.vehicleId === vehicle.id && r.status === 'pending'
+                    ).length;
+                    const vehicleDriverPending = displayedRecords.filter(
+                      (r) => r.vehicleId === vehicle.id && r.driverConfirmStatus === 'pending'
+                    ).length;
+                    const vehicleDetourInProgress = displayedRecords.filter(
+                      (r) => r.vehicleId === vehicle.id && r.detourExecutionStatus === 'in_progress'
+                    ).length;
+                    const isSelected = selectedVehicleId === vehicle.id;
+
+                    return (
+                      <motion.div
+                        key={vehicle.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        whileHover={{ scale: 1.005 }}
+                        onClick={() => setSelectedVehicleId(isSelected ? null : vehicle.id)}
+                        className={`bg-deep-blue-800/50 border rounded-lg p-3 cursor-pointer transition-all ${
+                          isSelected
+                            ? 'border-info shadow-lg shadow-info/10'
+                            : 'border-deep-blue-700 hover:border-info/30'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold ${
+                            vehicle.currentStatus === 'alert'
+                              ? 'bg-danger/20 text-danger'
+                              : vehicle.currentStatus === 'warning'
+                              ? 'bg-warning/20 text-warning'
+                              : 'bg-success/20 text-success'
+                          }`}>
+                            {vehicle.plateNumber.slice(-4)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-white">
+                                {vehicle.plateNumber}
+                              </span>
+                              <span className="text-xs text-deep-blue-600">
+                                {vehicle.driverName}
+                              </span>
+                            </div>
+                            <p className="text-xs text-deep-blue-600 truncate">
+                              {vehicle.cargoType} · 剩余 {vehicle.remainingMileage}km
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap justify-end">
+                            {vehiclePendingCount > 0 && (
+                              <span className="text-xs px-2 py-1 rounded bg-warning/20 text-warning border border-warning/30">
+                                <Clock className="w-3 h-3 inline mr-1" />
+                                {vehiclePendingCount} 待处置
+                              </span>
+                            )}
+                            {vehicleDriverPending > 0 && (
+                              <span className="text-xs px-2 py-1 rounded bg-info/20 text-info border border-info/30">
+                                <UserCheck className="w-3 h-3 inline mr-1" />
+                                {vehicleDriverPending} 待确认
+                              </span>
+                            )}
+                            {vehicleDetourInProgress > 0 && (
+                              <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                                <Route className="w-3 h-3 inline mr-1" />
+                                改线中
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {isSelected && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            className="mt-4 pt-4 border-t border-deep-blue-700"
+                          >
+                            <ExecutionProgress vehicle={vehicle} />
+                          </motion.div>
+                        )}
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {selectedVehicle && (
+              <div className="w-80 border-l border-deep-blue-700 bg-deep-blue-800/30 p-4 overflow-y-auto scrollbar-thin hidden lg:block">
+                <h3 className="text-sm font-semibold text-white mb-3">{selectedVehicle.plateNumber} 详情</h3>
+                <VehicleCard vehicle={selectedVehicle} index={0} />
+                <div className="mt-4 pt-4 border-t border-deep-blue-700">
+                  <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-info" />
+                    执行跟踪
+                  </h4>
+                  <ExecutionProgress vehicle={selectedVehicle} />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

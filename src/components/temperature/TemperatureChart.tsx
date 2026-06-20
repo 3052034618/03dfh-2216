@@ -8,9 +8,10 @@ interface TemperatureChartProps {
   minTemp: number;
   maxTemp: number;
   height?: number;
+  highlightTime?: Date | null;
 }
 
-export const TemperatureChart = ({ readings, minTemp, maxTemp, height = 200 }: TemperatureChartProps) => {
+export const TemperatureChart = ({ readings, minTemp, maxTemp, height = 200, highlightTime }: TemperatureChartProps) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [showAnimation, setShowAnimation] = useState(false);
 
@@ -171,6 +172,52 @@ export const TemperatureChart = ({ readings, minTemp, maxTemp, height = 200 }: T
         >
           {formatTemperature(maxTemp)}
         </text>
+
+        {highlightTime && readings.length > 1 && (() => {
+          const highlightMs = highlightTime.getTime();
+          const startTime = readings[0].timestamp.getTime();
+          const endTime = readings[readings.length - 1].timestamp.getTime();
+          const timeRange = endTime - startTime || 1;
+          const ratio = Math.max(0, Math.min(1, (highlightMs - startTime) / timeRange));
+          const innerWidth = chartWidth - padding.left - padding.right;
+          const x = padding.left + ratio * innerWidth;
+          const topY = padding.top;
+          const bottomY = chartHeight - padding.bottom;
+          return (
+            <g>
+              <line
+                x1={x}
+                x2={x}
+                y1={topY}
+                y2={bottomY}
+                stroke="#A855F7"
+                strokeWidth="2"
+                strokeDasharray="5,3"
+                opacity="0.9"
+              />
+              <circle
+                cx={x}
+                cy={(topY + bottomY) / 2}
+                r="5"
+                fill="#A855F7"
+                opacity="0.8"
+              >
+                <animate
+                  attributeName="r"
+                  values="4;7;4"
+                  dur="1.5s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0.8;0.4;0.8"
+                  dur="1.5s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+            </g>
+          );
+        })()}
 
         <motion.path
           initial={{ opacity: 0 }}

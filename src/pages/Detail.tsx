@@ -25,6 +25,7 @@ import { RiskSegmentList } from '@/components/vehicle/RiskSegmentList';
 import { DetourDecisionPanel } from '@/components/vehicle/DetourDecisionPanel';
 import { PostTripReview } from '@/components/vehicle/PostTripReview';
 import { PlaybackTimeline, PlaybackSnapshot } from '@/components/vehicle/PlaybackTimeline';
+import { ExecutionProgress } from '@/components/vehicle/ExecutionProgress';
 import { DisposalButtons } from '@/components/disposal/DisposalButtons';
 import { MapView } from '@/components/map/MapView';
 import {
@@ -68,6 +69,32 @@ export default function Detail() {
   const displayPosition: Position | null = playbackSnapshot?.position || vehicle?.currentPosition || null;
   const displayTemperature = playbackSnapshot?.temperature ?? vehicle?.currentTemp ?? 0;
   const displayStatus = playbackSnapshot?.riskLevel || vehicle?.riskLevel || vehicle?.currentStatus || 'normal';
+
+  const isInPlaybackMode = isPlaybackActive || playbackSnapshot !== null;
+
+  const playbackTimeMs = playbackSnapshot?.time?.getTime();
+
+  const playbackReadings = useMemo(() => {
+    if (!playbackTimeMs) return temperatureData;
+    return temperatureData.filter((t) => t.timestamp.getTime() <= playbackTimeMs);
+  }, [temperatureData, playbackTimeMs]);
+
+  const playbackRiskSegments = useMemo(() => {
+    if (!playbackSnapshot) return routeSegments;
+    return playbackSnapshot.activeRiskSegments.length > 0
+      ? playbackSnapshot.activeRiskSegments
+      : routeSegments.filter((s) => s.type === 'normal').slice(0, 3).concat(playbackSnapshot.activeRiskSegments);
+  }, [routeSegments, playbackSnapshot]);
+
+  const playbackDisposals = useMemo(() => {
+    if (!playbackSnapshot) return disposalRecords.filter((r) => r.vehicleId === vehicle.id);
+    return playbackSnapshot.disposalRecordsBefore;
+  }, [disposalRecords, vehicle.id, playbackSnapshot]);
+
+  const playbackDoorEvents = useMemo(() => {
+    if (!playbackSnapshot) return doorEvents;
+    return playbackSnapshot.doorEventsBefore;
+  }, [doorEvents, playbackSnapshot]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -289,51 +316,94 @@ export default function Detail() {
               {activeTab === 'temperature' && (
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-white">过去30分钟温度变化</h3>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-lg font-semibold text-white">温度变化</h3>
+                      {isInPlaybackMode && playbackSnapshot?.time && (
+                        <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-1 rounded border border-purple-500/30">
+                          回放至 {formatDateTime(playbackSnapshot.time)}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-sm text-deep-blue-600">
-                      数据每3秒自动更新
+                      {isInPlaybackMode
+                        ? `显示 ${playbackReadings.length} 条历史数据`
+                        : '数据每3秒自动更新'}
                     </span>
                   </div>
-                  <div className="bg-deep-blue-800/50 rounded-lg p-4 border border-deep-blue-700">
+                  <div className="bg-deep-blue-800/50 rounded-lg p-4 border border-deep-blue-700 relative">
+                    {isInPlaybackMode && (
+                      <div className="absolute top-4 right-4 z-10 w-3 h-3 bg-purple-500 rounded-full animate-pulse shadow-lg shadow-purple-500/50" />
+                    )}
                     <TemperatureChart
-                      readings={temperatureData}
+                      readings={playbackReadings.length > 0 ? playbackReadings : temperatureData}
                       minTemp={vehicle.targetTempMin}
                       maxTemp={vehicle.targetTempMax}
                       height={280}
+                      highlightTime={playbackSnapshot?.time}
                     />
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4 mt-4">
-                    <StatCard
-                      label="最低温度"
-                      value={formatTemperature(Math.min(...temperatureData.map((t) => t.temperature)))}
-                      color="info"
-                    />
-                    <StatCard
-                      label="最高温度"
-                      value={formatTemperature(Math.max(...temperatureData.map((t) => t.temperature)))}
-                      color="warning"
-                    />
-                    <StatCard
-                      label="平均温度"
-                      value={formatTemperature(
-                        temperatureData.reduce((sum, t) => sum + t.temperature, 0) / temperatureData.length
-                      )}
-                      color="success"
-                    />
-                  </div>
+                  {playbackReadings.length > 0 && (
+                    <div className="grid grid-cols-3 gap-4 mt-4">
+                      <StatCard
+                        label="最低温度"
+                        value={formatTemperature(Math.min(...playbackReadings.map((t) => t.temperature)))}
+                        color="info"
+                      />
+                      <StatCard
+                        label="最高温度"
+                        value={formatTemperature(Math.max(...playbackReadings.map((t) => t.temperature)))}
+                        color="warning"
+                      />
+                      <StatCard
+                        label="平均温度"
+                        value={formatTemperature(
+                          playbackReadings.reduce((sum, t) => sum + t.temperature, 0) / playbackReadings.length
+                        )}
+                        color="success"
+                      />
+                    </div>
+                  )}
+
+                  {isInPlaybackMode && playbackSnapshot && (
+                    <div className="mt-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-purple-400 font-medium">回放状态：</span>
+                        <span className="text-white">
+                          当前温度 {playbackSnapshot.temperature !== null ? formatTemperature(playbackSnapshot.temperature) : '未知'}
+                        </span>
+                        <span className={`ml-2 font-medium ${
+                          playbackSnapshot.riskLevel === 'alert' ? 'text-danger' :
+                          playbackSnapshot.riskLevel === 'warning' ? 'text-warning' : 'text-success'
+                        }`}>
+                          {playbackSnapshot.riskLevel === 'alert' ? '告警' :
+                            playbackSnapshot.riskLevel === 'warning' ? '预警' : '正常'}
+                        </span>
+                        <span className="text-deep-blue-600 ml-2">
+                          已处置 {playbackSnapshot.disposalRecordsBefore.length} 条
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
               {activeTab === 'risks' && (
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-white">风险路段分析</h3>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-lg font-semibold text-white">风险路段分析</h3>
+                      {isInPlaybackMode && (
+                        <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-1 rounded border border-purple-500/30">
+                          回放状态：{playbackRiskSegments.filter(s => s.type !== 'normal').length} 处风险
+                        </span>
+                      )}
+                    </div>
                     <span className="text-sm text-deep-blue-600">
                       基于历史数据和实时路况
                     </span>
                   </div>
-                  <RiskSegmentList segments={routeSegments} />
+                  <RiskSegmentList segments={playbackRiskSegments} highlightTime={playbackSnapshot?.time} />
                 </div>
               )}
 
@@ -386,13 +456,20 @@ export default function Detail() {
               {activeTab === 'doors' && (
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-white">开关门记录</h3>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-lg font-semibold text-white">开关门记录</h3>
+                      {isInPlaybackMode && (
+                        <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-1 rounded border border-purple-500/30">
+                          回放中 · {playbackDoorEvents.length} 次操作
+                        </span>
+                      )}
+                    </div>
                     <span className="text-sm text-deep-blue-600">
-                      过去30分钟 · {doorEvents.length} 次操作
+                      共 {doorEvents.length} 次操作
                     </span>
                   </div>
                   <div className="bg-deep-blue-800/50 rounded-lg p-4 border border-deep-blue-700">
-                    <DoorEventTimeline events={doorEvents} />
+                    <DoorEventTimeline events={isInPlaybackMode ? playbackDoorEvents : doorEvents} />
                   </div>
                 </div>
               )}
@@ -415,6 +492,16 @@ export default function Detail() {
         <div className="w-96 border-l border-deep-blue-700 bg-deep-blue-800/30 p-4 overflow-y-auto scrollbar-thin">
           <h3 className="text-lg font-semibold text-white mb-4">处置措施</h3>
           <DisposalButtons vehicleId={vehicle.id} />
+
+          <div className="mt-6 pt-6 border-t border-deep-blue-700">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">执行跟踪</h3>
+              <span className="text-xs text-deep-blue-600">
+                共 {playbackDisposals.length} 条
+              </span>
+            </div>
+            <ExecutionProgress vehicle={vehicle} compact />
+          </div>
         </div>
       </div>
     </div>

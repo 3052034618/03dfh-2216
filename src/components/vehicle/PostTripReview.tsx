@@ -165,6 +165,52 @@ export const PostTripReview = ({
     return { avgBefore, avgAfter, trend: avgAfter - avgBefore };
   };
 
+  const getRiskLevelAtTime = (time: Date) => {
+    const timeMs = time.getTime();
+    const readingsAt = temperatureData.filter((t) => t.timestamp.getTime() <= timeMs);
+    const lastReading = readingsAt[readingsAt.length - 1];
+    const temp = lastReading?.temperature ?? vehicle.currentTemp;
+
+    let tempStatus: 'normal' | 'warning' | 'alert' = 'normal';
+    if (temp > maxTemp || temp < minTemp) {
+      tempStatus = 'alert';
+    } else if (temp > maxTemp - 0.5 || temp < minTemp + 0.5) {
+      tempStatus = 'warning';
+    }
+
+    const timeOffsetMin = (Date.now() - timeMs) / (60 * 1000);
+    const mileageAtTime = Math.max(0, traveled - timeOffsetMin * (vehicle.totalMileage / (60 * 6)));
+
+    let segmentStatus: 'normal' | 'warning' | 'alert' = 'normal';
+    const activeSeg = routeSegments.find(
+      (s) =>
+        s.type !== 'normal' &&
+        s.startMileage - 2 <= mileageAtTime &&
+        s.endMileage + 2 >= mileageAtTime
+    );
+    const nearSeg = routeSegments.find(
+      (s) =>
+        s.type !== 'normal' &&
+        s.startMileage > mileageAtTime &&
+        s.startMileage - mileageAtTime <= 15
+    );
+
+    if (activeSeg) {
+      segmentStatus = activeSeg.type === 'hotspot' ? 'alert' : 'warning';
+    } else if (nearSeg) {
+      segmentStatus = 'warning';
+    }
+
+    const overall: 'normal' | 'warning' | 'alert' =
+      tempStatus === 'alert' || segmentStatus === 'alert'
+        ? 'alert'
+        : tempStatus === 'warning' || segmentStatus === 'warning'
+        ? 'warning'
+        : 'normal';
+
+    return { temp, tempStatus, segmentStatus, overall, activeSeg, nearSeg };
+  };
+
   return (
     <div className="space-y-4">
       <div className="p-4 bg-deep-blue-800/50 rounded-lg border border-deep-blue-700">
@@ -205,7 +251,9 @@ export const PostTripReview = ({
                   {timelineEvents.map((event, idx) => {
                     const isSelected = selectedEventId === event.id;
                     const Icon = event.icon;
-                    const { trend } = analyzeTempTrend(event.timestamp);
+                    const trendResult = analyzeTempTrend(event.timestamp);
+                    const { trend } = trendResult;
+                    const riskAtEvent = getRiskLevelAtTime(event.timestamp);
 
                     return (
                       <motion.div
@@ -275,8 +323,146 @@ export const PostTripReview = ({
                             <motion.div
                               initial={{ opacity: 0, height: 0 }}
                               animate={{ opacity: 1, height: 'auto' }}
-                              className="mt-3 pt-3 border-t border-deep-blue-700 space-y-3"
+                              className="mt-3 pt-3 border-t border-deep-blue-700 space-y-4"
                             >
+                              <div className="space-y-3">
+                                <div className="text-xs text-deep-blue-600 font-semibold flex items-center gap-1">
+                                  <AlertCircle className="w-3.5 h-3.5" />
+                                  事件时车辆状态
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div className="bg-deep-blue-800 rounded p-2">
+                                    <p className="text-deep-blue-600 text-xs mb-1">综合风险</p>
+                                    <p
+                                      className={`text-lg font-bold ${
+                                        riskAtEvent.overall === 'alert'
+                                          ? 'text-danger'
+                                          : riskAtEvent.overall === 'warning'
+                                          ? 'text-warning'
+                                          : 'text-success'
+                                      }`}
+                                    >
+                                      {riskAtEvent.overall === 'alert'
+                                        ? '告警'
+                                        : riskAtEvent.overall === 'warning'
+                                        ? '预警'
+                                        : '正常'}
+                                    </p>
+                                  </div>
+                                  <div className="bg-deep-blue-800 rounded p-2">
+                                    <p className="text-deep-blue-600 text-xs mb-1">温度状态</p>
+                                    <p
+                                      className={`text-lg font-bold font-mono ${
+                                        riskAtEvent.tempStatus === 'alert'
+                                          ? 'text-danger'
+                                          : riskAtEvent.tempStatus === 'warning'
+                                          ? 'text-warning'
+                                          : 'text-success'
+                                      }`}
+                                    >
+                                      {formatTemperature(riskAtEvent.temp)}
+                                    </p>
+                                  </div>
+                                  <div className="bg-deep-blue-800 rounded p-2">
+                                    <p className="text-deep-blue-600 text-xs mb-1">路段状态</p>
+                                    <p
+                                      className={`text-lg font-bold ${
+                                        riskAtEvent.segmentStatus === 'alert'
+                                          ? 'text-danger'
+                                          : riskAtEvent.segmentStatus === 'warning'
+                                          ? 'text-warning'
+                                          : 'text-success'
+                                      }`}
+                                    >
+                                      {riskAtEvent.activeSeg
+                                        ? '经过风险段'
+                                        : riskAtEvent.nearSeg
+                                        ? '前方风险段'
+                                        : '正常路段'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {riskAtEvent.activeSeg && (
+                                  <div className="text-xs p-2 bg-warning/10 border border-warning/30 rounded">
+                                    <span className="text-warning font-medium">正在经过：</span>
+                                    <span className="text-white ml-1">
+                                      {riskAtEvent.activeSeg.description}
+                                    </span>
+                                  </div>
+                                )}
+                                {riskAtEvent.nearSeg && !riskAtEvent.activeSeg && (
+                                  <div className="text-xs p-2 bg-info/10 border border-info/30 rounded">
+                                    <span className="text-info font-medium">前方逼近：</span>
+                                    <span className="text-white ml-1">
+                                      {riskAtEvent.nearSeg.description}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="text-xs text-deep-blue-600 font-semibold flex items-center gap-1">
+                                  <TrendingUp className="w-3.5 h-3.5" />
+                                  事件后温度变化
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 text-xs">
+                                  <div className="bg-deep-blue-800 rounded p-2">
+                                    <p className="text-deep-blue-600 mb-1">事件前均温</p>
+                                    <p className="text-white font-mono font-bold">
+                                      {formatTemperature(trendResult.avgBefore)}
+                                    </p>
+                                  </div>
+                                  <div className="bg-deep-blue-800 rounded p-2">
+                                    <p className="text-deep-blue-600 mb-1">事件后均温</p>
+                                    <p className="text-white font-mono font-bold">
+                                      {trendResult.avgAfter > 0
+                                        ? formatTemperature(trendResult.avgAfter)
+                                        : '—'}
+                                    </p>
+                                  </div>
+                                  <div className="bg-deep-blue-800 rounded p-2">
+                                    <p className="text-deep-blue-600 mb-1">变化趋势</p>
+                                    <p
+                                      className={`font-mono font-bold ${
+                                        trend > 0.3
+                                          ? 'text-danger'
+                                          : trend > 0.1
+                                          ? 'text-warning'
+                                          : trend < -0.1
+                                          ? 'text-success'
+                                          : 'text-info'
+                                      }`}
+                                    >
+                                      {trendResult.avgAfter > 0
+                                        ? `${trend > 0 ? '+' : ''}${trend.toFixed(1)}℃`
+                                        : '暂无数据'}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div
+                                  className={`text-xs px-3 py-2 rounded border ${
+                                    trend > 0.3
+                                      ? 'bg-danger/10 border-danger/30 text-danger'
+                                      : trend > 0.1
+                                      ? 'bg-warning/10 border-warning/30 text-warning'
+                                      : trend < -0.1
+                                      ? 'bg-success/10 border-success/30 text-success'
+                                      : 'bg-info/10 border-info/30 text-info'
+                                  }`}
+                                >
+                                  {trendResult.avgAfter === 0
+                                    ? '⚠️ 暂无后续数据可对比'
+                                    : trend > 0.3
+                                    ? '🔴 事件后温度继续明显升高，处置无效或风险加剧'
+                                    : trend > 0.1
+                                    ? '🟡 事件后温度略有升高，需持续关注'
+                                    : trend < -0.1
+                                    ? '🟢 事件后温度明显下降，情况好转'
+                                    : '🔵 事件后温度基本保持稳定'}
+                                </div>
+                              </div>
+
                               {event.type === 'temperature_anomaly' && event.details.reading && (
                                 <div className="grid grid-cols-3 gap-2 text-xs">
                                   <div className="bg-deep-blue-800 rounded p-2">
