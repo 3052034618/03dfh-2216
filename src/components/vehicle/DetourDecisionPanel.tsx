@@ -12,9 +12,10 @@ import {
   TrendingDown,
   Navigation,
   Gauge,
+  Map,
 } from 'lucide-react';
-import type { Vehicle, AlternativeRoute } from '@/types';
-import { DISPOSAL_TYPE_LABELS } from '@/types';
+import type { Vehicle, AlternativeRoute, RiskReason } from '@/types';
+import { DISPOSAL_TYPE_LABELS, ROUTE_SEGMENT_LABELS } from '@/types';
 import {
   formatMileage,
   formatTime,
@@ -22,6 +23,7 @@ import {
   getRiskReasonLabel,
   getRiskReasonColor,
   formatDurationMinutes,
+  getRouteSegmentLabel,
 } from '@/utils/format';
 import { useAppStore } from '@/store';
 import { Button } from '@/components/common/Button';
@@ -39,6 +41,14 @@ export const DetourDecisionPanel = ({ vehicle, alternativeRoutes }: DetourDecisi
   const [success, setSuccess] = useState(false);
   const addDisposalRecord = useAppStore((state) => state.addDisposalRecord);
   const riskReasons = useAppStore((state) => state.getRiskReasonsForVehicle(vehicle.id));
+  const allRouteSegments = useAppStore((state) => state.routeSegments[vehicle.id] || []);
+  const traveled = vehicle.traveledMileage || (vehicle.totalMileage - vehicle.remainingMileage);
+
+  const currentRiskSegments = useMemo(() => {
+    return allRouteSegments.filter(
+      (s) => s.type !== 'normal' && s.endMileage >= traveled - 2 && s.startMileage <= traveled + 50
+    ).sort((a, b) => a.startMileage - b.startMileage);
+  }, [allRouteSegments, traveled]);
 
   const originalRoute = useMemo(() => ({
     id: 'original',
@@ -49,7 +59,8 @@ export const DetourDecisionPanel = ({ vehicle, alternativeRoutes }: DetourDecisi
     nearestServiceAreaDistance: 45,
     tempRiseEstimate: vehicle.nearestRisk?.estimatedTempRise || 1.5,
     riskCount: riskReasons.length,
-  }), [vehicle, riskReasons.length]);
+    riskSegments: currentRiskSegments,
+  }), [vehicle, riskReasons.length, currentRiskSegments]);
 
   const allRoutes = [originalRoute, ...alternativeRoutes.map((r) => ({
     ...r,
@@ -63,6 +74,22 @@ export const DetourDecisionPanel = ({ vehicle, alternativeRoutes }: DetourDecisi
     setShowConfirm(true);
   };
 
+  const buildDetourReasons = () => {
+    const reasons: string[] = [];
+    if (currentRiskSegments.length > 0) {
+      const segDesc = currentRiskSegments.map((r) => {
+        const distance = Math.round(r.startMileage - traveled);
+        const pos = distance <= 0 ? '正在经过' : `前方${distance}公里`;
+        return `${pos}${r.description}（预计升温+${r.estimatedTempRise.toFixed(1)}℃）`;
+      }).join('、');
+      reasons.push(`原路线风险：${segDesc}`);
+    }
+    if (vehicle.nearestRisk && currentRiskSegments.length === 0) {
+      reasons.push(`前方${vehicle.nearestRisk.distance}公里${vehicle.nearestRisk.description}，预计升温+${vehicle.nearestRisk.estimatedTempRise.toFixed(1)}℃`);
+    }
+    return reasons.join(' ');
+  };
+
   const confirmDetour = async () => {
     if (!selectedRoute || selectedRoute.id === 'original') return;
     
@@ -70,12 +97,16 @@ export const DetourDecisionPanel = ({ vehicle, alternativeRoutes }: DetourDecisi
     
     await new Promise((resolve) => setTimeout(resolve, 1200));
     
-    const riskDesc = `原路线风险：${riskReasons.map((r) => getRiskReasonLabel(r)).join('、')}；建议绕行：${selectedRoute.name}`;
+    const originalRiskDesc = buildDetourReasons();
+    const recommendation = `推荐理由：超温概率从${originalRoute.overheatProbability}%降至${selectedRoute.overheatProbability}%，风险路段从${originalRoute.riskCount}处降至${selectedRoute.riskCount}处，剩余里程${selectedRoute.remainingMileage.toFixed(0)}公里，预计到达${formatTime(selectedRoute.estimatedArrival)}`;
+    const fullDescription = `${originalRiskDesc}。建议绕行至${selectedRoute.name}。${recommendation}`;
     
-    addDisposalRecord(vehicle.id, 'suggest_detour', riskDesc, {
+    addDisposalRecord(vehicle.id, 'suggest_detour', fullDescription, {
       routeChange: true,
       alternativeRouteId: selectedRoute.id,
       selectedAction: DISPOSAL_TYPE_LABELS.suggest_detour,
+      riskDescription: fullDescription,
+      followUpStatus: 'improving',
     });
     
     setProcessing(false);
@@ -308,6 +339,85 @@ export const DetourDecisionPanel = ({ vehicle, alternativeRoutes }: DetourDecisi
           })}
         </div>
       </div>
+
+      {selectedRoute && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 bg-deep-blue-800/50 rounded-lg border border-deep-blue-700"
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Map className="w-5 h-5 text-info" />
+            <span className="text-sm font-medium text-white">路线预览：{selectedRoute.name}</span>
+          </div>
+          
+          {selectedRoute.riskSegments && selectedRoute.riskSegments.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex gap-2 text-xs mb-2">
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 bg-success rounded" />
+                  <span className="text-deep-blue-600">正常路段</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 bg-warning rounded" />
+                  <span className="text-deep-blue-600">拥堵/停车</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 bg-danger rounded" />
+                  <span className="text-deep-blue-600">高温路段</span>
+                </span>
+              </div>
+              <div className="flex items-stretch gap-0.5 h-8 rounded overflow-hidden">
+                {selectedRoute.riskSegments.map((seg: any, idx: number) => {
+                  const isRisk = seg.type !== 'normal';
+                  const bgColor = 
+                    seg.type === 'hotspot' ? 'bg-danger' :
+                    seg.type === 'congestion' ? 'bg-warning' :
+                    seg.type === 'long_stop' ? 'bg-warning' :
+                    'bg-success';
+                  const widthPct = Math.max(8, Math.round((seg.lengthMileage || 10) / selectedRoute.remainingMileage * 100));
+                  return (
+                    <motion.div
+                      key={idx}
+                      initial={{ scaleY: 0 }}
+                      animate={{ scaleY: 1 }}
+                      transition={{ delay: idx * 0.05, duration: 0.3 }}
+                      className={`${bgColor} relative group cursor-pointer`}
+                      style={{ width: `${widthPct}%` }}
+                      title={`${getRouteSegmentLabel(seg.type)}：${seg.description}${seg.estimatedTempRise ? `，预计升温+${seg.estimatedTempRise.toFixed(1)}℃` : ''}`}
+                    >
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-deep-blue rounded text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                        {getRouteSegmentLabel(seg.type)}
+                        {seg.estimatedTempRise && ` +${seg.estimatedTempRise.toFixed(1)}℃`}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
+                {selectedRoute.riskSegments.filter((s: any) => s.type !== 'normal').slice(0, 4).map((seg: any, idx: number) => (
+                  <div key={idx} className="flex items-start gap-2 p-2 bg-deep-blue-800 rounded">
+                    <span className={`w-2 h-2 mt-1 rounded-full ${
+                      seg.type === 'hotspot' ? 'bg-danger' : 'bg-warning'
+                    }`} />
+                    <div className="min-w-0">
+                      <p className="text-white truncate">{seg.description}</p>
+                      {seg.estimatedTempRise && (
+                        <p className="text-warning font-mono">+{seg.estimatedTempRise.toFixed(1)}℃</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-16 bg-success/10 rounded text-success text-sm">
+              <Check className="w-4 h-4 mr-2" />
+              该路线无风险路段，温度安全
+            </div>
+          )}
+        </motion.div>
+      )}
 
       <AnimatePresence>
         {showConfirm && selectedRoute && (

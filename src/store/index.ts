@@ -47,13 +47,10 @@ const determineTempStatus = (
   minTemp: number,
   maxTemp: number
 ): VehicleStatus => {
-  const range = maxTemp - minTemp;
-  const warningThreshold = range * 0.8;
-  
-  if (currentTemp > maxTemp || currentTemp < minTemp) {
+  if (currentTemp > maxTemp + 0.3 || currentTemp < minTemp - 0.3) {
     return 'alert';
   }
-  if (currentTemp > maxTemp - warningThreshold || currentTemp < minTemp + warningThreshold) {
+  if (currentTemp > maxTemp - 0.5 || currentTemp < minTemp + 0.5) {
     return 'warning';
   }
   return 'normal';
@@ -71,9 +68,11 @@ const getRiskReasons = (
   }
   
   const traveled = vehicle.traveledMileage || (vehicle.totalMileage - vehicle.remainingMileage);
-  const upcomingSegments = segments.filter((s) => s.startMileage >= traveled - 10 && s.type !== 'normal');
+  const currentAndUpcomingSegments = segments.filter(
+    (s) => s.type !== 'normal' && s.endMileage >= traveled - 2 && s.startMileage <= traveled + 50
+  );
   
-  upcomingSegments.forEach((seg) => {
+  currentAndUpcomingSegments.forEach((seg) => {
     if (seg.type === 'congestion') reasons.push('congestion');
     if (seg.type === 'hotspot') reasons.push('hotspot');
     if (seg.type === 'long_stop') reasons.push('long_stop');
@@ -93,13 +92,13 @@ const calculateOverallRisk = (
   );
   
   const traveled = vehicle.traveledMileage || (vehicle.totalMileage - vehicle.remainingMileage);
-  const upcomingRiskSegments = segments
-    .filter((s) => s.type !== 'normal' && s.startMileage >= traveled - 5)
+  const relevantRiskSegments = segments
+    .filter((s) => s.type !== 'normal' && s.endMileage >= traveled - 2 && s.startMileage <= traveled + 50)
     .sort((a, b) => a.startMileage - b.startMileage);
   
   let nearestRisk: Vehicle['nearestRisk'] | undefined;
-  if (upcomingRiskSegments.length > 0) {
-    const nearest = upcomingRiskSegments[0];
+  if (relevantRiskSegments.length > 0) {
+    const nearest = relevantRiskSegments[0];
     const distance = Math.max(0, nearest.startMileage - traveled);
     nearestRisk = {
       type: nearest.type,
@@ -112,19 +111,31 @@ const calculateOverallRisk = (
   
   let riskLevel: VehicleStatus = 'normal';
   
-  if (tempStatus === 'alert') {
+  const currentlyInRiskSegment = relevantRiskSegments.some(
+    (s) => s.startMileage <= traveled && s.endMileage >= traveled
+  );
+  
+  const upcomingImmediateRisk = relevantRiskSegments.some(
+    (s) => s.startMileage >= traveled && s.startMileage - traveled <= 15
+  );
+  
+  const alertCondition =
+    tempStatus === 'alert' ||
+    (currentlyInRiskSegment && tempStatus === 'warning') ||
+    (upcomingImmediateRisk && relevantRiskSegments.some(
+      (s) => s.estimatedOverheatTime && s.estimatedOverheatTime < 20
+    ));
+  
+  const warningCondition =
+    tempStatus === 'warning' ||
+    currentlyInRiskSegment ||
+    (upcomingImmediateRisk && relevantRiskSegments.some((s) => s.type === 'hotspot')) ||
+    (upcomingImmediateRisk && relevantRiskSegments.some((s) => s.type === 'congestion' && s.congestionLevel === 'severe')) ||
+    (upcomingImmediateRisk && relevantRiskSegments.some((s) => s.type === 'long_stop'));
+  
+  if (alertCondition) {
     riskLevel = 'alert';
-  } else if (upcomingRiskSegments.some((s) => 
-    s.estimatedOverheatTime && s.estimatedOverheatTime < 20
-  )) {
-    riskLevel = 'alert';
-  } else if (upcomingRiskSegments.some((s) => s.type === 'hotspot')) {
-    riskLevel = 'warning';
-  } else if (upcomingRiskSegments.some((s) => s.type === 'congestion' && s.congestionLevel === 'severe')) {
-    riskLevel = 'warning';
-  } else if (tempStatus === 'warning') {
-    riskLevel = 'warning';
-  } else if (upcomingRiskSegments.length > 0) {
+  } else if (warningCondition) {
     riskLevel = 'warning';
   }
   
@@ -288,13 +299,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     const vehicle = get().getVehicleById(vehicleId);
     if (!vehicle) return;
 
+    const tempStatus = determineTempStatus(vehicle.currentTemp, vehicle.targetTempMin, vehicle.targetTempMax);
+    const traveled = vehicle.traveledMileage || (vehicle.totalMileage - vehicle.remainingMileage);
     const riskReasons = get().getRiskReasonsForVehicle(vehicleId);
     const segments = get().routeSegments[vehicleId] || [];
-    const upcomingRisks = segments.filter(
-      (s) => s.type !== 'normal' && s.startMileage >= (vehicle.traveledMileage || vehicle.totalMileage - vehicle.remainingMileage) - 5
-    );
-    const riskDescription = upcomingRisks.length > 0 
-      ? upcomingRisks.map((r) => r.description).join('；')
+    const currentAndUpcomingRisks = segments.filter(
+      (s) => s.type !== 'normal' && s.endMileage >= traveled - 2 && s.startMileage <= traveled + 50
+    ).sort((a, b) => a.startMileage - b.startMileage);
+
+    const riskDescriptionParts = currentAndUpcomingRisks.map((r) => {
+      const isCurrent = r.startMileage <= traveled && r.endMileage >= traveled;
+      const distance = r.startMileage - traveled;
+      let prefix = isCurrent ? '正在经过' : distance <= 0 ? '刚经过' : `前方${Math.round(distance)}公里`;
+      const levelInfo = r.congestionLevel ? `(${r.congestionLevel === 'severe' ? '严重拥堵' : r.congestionLevel === 'moderate' ? '中度拥堵' : '缓行'})` : '';
+      const tempInfo = r.historicalHighTemp ? `，历史最高${r.historicalHighTemp.toFixed(1)}℃` : '';
+      const stopInfo = r.stopDuration ? `，停车${r.stopDuration}分钟` : '';
+      return `${prefix}${r.description}${levelInfo}${tempInfo}${stopInfo}`;
+    });
+
+    if (tempStatus === 'alert') {
+      riskDescriptionParts.unshift('当前温度已超出设定温区');
+    } else if (tempStatus === 'warning') {
+      riskDescriptionParts.unshift('当前温度接近设定温区');
+    }
+
+    const riskDescription = riskDescriptionParts.length > 0
+      ? riskDescriptionParts.join('；')
       : '温度异常';
 
     const baseRecord = generateDisposalRecord(

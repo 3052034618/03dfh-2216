@@ -15,6 +15,7 @@ import {
   Coffee,
   Gauge,
   Route,
+  Activity,
 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { TemperatureChart } from '@/components/temperature/TemperatureChart';
@@ -22,6 +23,7 @@ import { DoorEventTimeline } from '@/components/vehicle/DoorEventTimeline';
 import { ServiceAreaList } from '@/components/vehicle/ServiceAreaList';
 import { RiskSegmentList } from '@/components/vehicle/RiskSegmentList';
 import { DetourDecisionPanel } from '@/components/vehicle/DetourDecisionPanel';
+import { PostTripReview } from '@/components/vehicle/PostTripReview';
 import { DisposalButtons } from '@/components/disposal/DisposalButtons';
 import {
   formatTemperature,
@@ -38,7 +40,7 @@ import type { Vehicle } from '@/types';
 export default function Detail() {
   const { vehicleId } = useParams<{ vehicleId: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'temperature' | 'risks' | 'detour' | 'doors' | 'services'>('temperature');
+  const [activeTab, setActiveTab] = useState<'temperature' | 'risks' | 'detour' | 'doors' | 'services' | 'review'>('temperature');
 
   const vehicles = useAppStore((state) => state.vehicles);
   const vehicle = useMemo(() => vehicles.find((v) => v.id === vehicleId), [vehicles, vehicleId]);
@@ -47,6 +49,7 @@ export default function Detail() {
   const serviceAreas = useAppStore((state) => state.serviceAreas[vehicleId || ''] || []);
   const routeSegments = useAppStore((state) => state.routeSegments[vehicleId || ''] || []);
   const alternativeRoutes = useAppStore((state) => state.getAlternativeRoutes(vehicleId || ''));
+  const disposalRecords = useAppStore((state) => state.disposalRecords);
   const updateTemperatures = useAppStore((state) => state.updateTemperatures);
 
   useEffect(() => {
@@ -79,6 +82,7 @@ export default function Detail() {
     { id: 'temperature', label: '温度曲线', icon: Thermometer },
     { id: 'risks', label: '风险路段', icon: TrendingUp },
     { id: 'detour', label: '绕行决策', icon: Route, badge: alternativeRoutes.length > 0 },
+    { id: 'review', label: '班后复盘', icon: Activity },
     { id: 'doors', label: '开关门记录', icon: DoorOpen },
     { id: 'services', label: '前方服务区', icon: Coffee },
   ] as const;
@@ -284,6 +288,29 @@ export default function Detail() {
                     </span>
                   </div>
                   <DetourDecisionPanel vehicle={vehicle} alternativeRoutes={alternativeRoutes} />
+                </div>
+              )}
+
+              {activeTab === 'review' && (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-semibold text-white">班后复盘</h3>
+                    </div>
+                    <span className="text-sm text-deep-blue-600">
+                      温度曲线、风险路段、处置动作时间线
+                    </span>
+                  </div>
+                  <PostTripReview
+                    vehicle={vehicle}
+                    temperatureData={temperatureData}
+                    disposalRecords={disposalRecords}
+                    routeSegments={routeSegments}
+                    doorEvents={doorEvents}
+                    alternativeRoutes={alternativeRoutes}
+                    minTemp={vehicle.targetTempMin}
+                    maxTemp={vehicle.targetTempMax}
+                  />
                 </div>
               )}
 
